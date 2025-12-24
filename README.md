@@ -50,5 +50,5 @@ Sample output folder structure for 3 processed files\
 Sample spreadsheet
 <img width="1363" height="385" alt="Screenshot 2025-12-23 at 9 12 00 PM" src="https://github.com/user-attachments/assets/2a6bdf70-9758-4288-8e3e-ef88e65779cc" />
 
-Sample frame directory with files named by index and pts\
+Sample frames directory with files named by index and pts\
 <img width="326" height="259" alt="Screenshot 2025-12-23 at 9 12 46 PM" src="https://github.com/user-attachments/assets/25f2778e-faec-49fd-9c1d-bd72fd7ae157" />
