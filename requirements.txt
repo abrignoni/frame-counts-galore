@@ -1,0 +1,17 @@
+# External dependencies
+av==10.1.2           # PyAV for video decoding (requires FFmpeg installed)
+numpy==1.26.0        # For array manipulation and image verification
+Pillow==10.1.0       # For saving frames as PNG images
+
+# Standard library modules used in the script (no installation needed)
+# argparse
+# logging
+# hashlib
+# csv
+# os
+# sys
+# json
+# platform
+# datetime
+# multiprocessing
+# time
