@@ -11,7 +11,7 @@ pip3 install -r requirements.txt
 
 Script processes video files to extract the following:
 * All frames in the video
-* Calculates de frames per second to include average variable frame rates
+* Calculates the frames per second to include average variable frame rates
 * Calculates the lenght of the video
 
 Script also provides a CSV file per video with the following columns:
@@ -26,7 +26,7 @@ Script also provides a CSV file per video with the following columns:
 * Image SHA 256 for pixel data after frame extraction is written to disk
 * Hash verified field
 * Image filename
-* Decoding methng (Always CPU)
+* Decoding method (Always CPU)
 
 Script generates a case manifest in json and a case log for all recorded script events.
 
