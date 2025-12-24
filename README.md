@@ -1,7 +1,8 @@
 # frame-counts-galore
 Python wrapper for FFMPEG that extracts frames from media.
 
-Dependencies for your python environment are listed in requirements.txt\
+Dependencies for your python environment are listed in requirements.txt
+
 Install them using the below command. Ensure the py part is correct for your environment, eg py, python, or python3, etc.
 
 py -m pip install -r requirements.txt\
