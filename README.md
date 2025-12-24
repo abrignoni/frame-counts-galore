@@ -7,7 +7,7 @@ Install them using the below command. Ensure the py part is correct for your env
 
 py -m pip install -r requirements.txt\
 or\
-pip3 install -r requirements.txt\
+pip3 install -r requirements.txt
 
 Script processes video files to extract the following:
 * All frames in the video
