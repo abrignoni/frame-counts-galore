@@ -44,7 +44,7 @@ options:\
 Sample screen output
 <img width="1517" height="400" alt="Screenshot 2025-12-23 at 7 12 57 PM" src="https://github.com/user-attachments/assets/71730bf7-f7e6-4a69-85aa-d0be40b82b96" />
 
-Sample output folder structure for 4 processed files\
+Sample output folder structure for 3 processed files\
 <img width="464" height="171" alt="Screenshot 2025-12-23 at 9 09 53 PM" src="https://github.com/user-attachments/assets/f6793348-b65a-477d-85f6-64f7294bd6b1" />
 
 Sample spreadsheet
