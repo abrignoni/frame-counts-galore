@@ -9,6 +9,8 @@ py -m pip install -r requirements.txt\
 or\
 pip3 install -r requirements.txt
 
+FFMPEG needs to be installed on your system.
+
 Script processes video files to extract the following:
 * All frames in the video
 * Calculates the frames per second to include average variable frame rates
