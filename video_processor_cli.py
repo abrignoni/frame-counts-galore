@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import av
 import csv
 import hashlib
@@ -39,16 +41,23 @@ def setup_worker_logging(log_queue):
     logger.setLevel(logging.INFO)
     logger.addHandler(qh)
 
+# ---------------- WORKER ----------------
 def process_video(args):
-    video_path, case_dir, log_queue = args
+    (
+        video_path,
+        case_dir,
+        log_queue,
+        no_frames,
+        pts_only
+    ) = args
+
     setup_worker_logging(log_queue)
     logger = logging.getLogger(__name__)
 
     video_name = os.path.splitext(os.path.basename(video_path))[0]
     video_dir = os.path.join(case_dir, video_name)
     frames_dir = os.path.join(video_dir, "frames")
-    os.makedirs(frames_dir, exist_ok=True)
-    csv_path = os.path.join(video_dir, f"{video_name}_frame_timing.csv")
+    os.makedirs(video_dir, exist_ok=True)
 
     logger.info(f"[{video_name}] Processing video: {video_path}")
 
@@ -66,10 +75,62 @@ def process_video(args):
 
     stream = video_streams[0]
     codec = stream.codec_context.codec
+
+    # ======================================================
+    # PTS-ONLY / METADATA-ONLY MODE (NO DECODE)
+    # ======================================================
+    if pts_only:
+        packets = []
+
+        for packet in container.demux(stream):
+            if packet.pts is None:
+                continue
+
+            packets.append({
+                "packet_index": len(packets),
+                "pts": packet.pts,
+                "dts": packet.dts,
+                "duration": packet.duration,
+                "time_base": str(packet.time_base),
+                "timestamp_seconds": float(packet.pts * packet.time_base),
+                "is_keyframe": packet.is_keyframe
+            })
+
+        container.close()
+
+        if not packets:
+            logger.warning(f"[{video_name}] No packets with PTS found")
+            return None
+
+        csv_path = os.path.join(video_dir, f"{video_name}_pts_only.csv")
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=packets[0].keys())
+            writer.writeheader()
+            writer.writerows(packets)
+
+        logger.info(f"[{video_name}] PTS-only mode complete | Packets: {len(packets)}")
+
+        return {
+            "video": video_path,
+            "mode": "pts-only",
+            "packets": len(packets),
+            "codec": codec.name,
+            "codec_long": codec.long_name,
+            "time_base": str(stream.time_base),
+            "duration": float(stream.duration * stream.time_base)
+            if stream.duration else None
+        }
+
+    # ======================================================
+    # DECODE-BASED MODES
+    # ======================================================
+    if not no_frames:
+        os.makedirs(frames_dir, exist_ok=True)
+
     frames = []
 
-    # ---------------- FRAME EXTRACTION ----------------
     for frame_index, frame in enumerate(container.decode(stream)):
+
         if frame.pts is not None and frame.time_base:
             timestamp_seconds = float(frame.pts * frame.time_base)
             pts_value = frame.pts
@@ -77,19 +138,27 @@ def process_video(args):
             timestamp_seconds = None
             pts_value = None
 
+        decoded_hash = None
+        image_hash = None
+        image_filename = None
+        hash_verified = None
+
         try:
             rgb = frame.to_ndarray(format="rgb24")
         except Exception:
             continue
 
         decoded_hash = hashlib.sha256(rgb.tobytes()).hexdigest()
-        pts_label = pts_value if pts_value is not None else "no_pts"
-        image_filename = f"frame_{frame_index:06d}_pts_{pts_label}.png"
-        image_path = os.path.join(frames_dir, image_filename)
-        Image.fromarray(rgb).save(image_path)
 
-        reloaded = np.array(Image.open(image_path))
-        image_hash = hashlib.sha256(reloaded.tobytes()).hexdigest()
+        if not no_frames:
+            pts_label = pts_value if pts_value is not None else "no_pts"
+            image_filename = f"frame_{frame_index:06d}_pts_{pts_label}.png"
+            image_path = os.path.join(frames_dir, image_filename)
+
+            Image.fromarray(rgb).save(image_path)
+            reloaded = np.array(Image.open(image_path))
+            image_hash = hashlib.sha256(reloaded.tobytes()).hexdigest()
+            hash_verified = (decoded_hash == image_hash)
 
         frames.append({
             "frame_index": frame_index,
@@ -101,7 +170,7 @@ def process_video(args):
             "key_frame": bool(frame.key_frame),
             "decoded_sha256": decoded_hash,
             "image_sha256": image_hash,
-            "hash_verified": decoded_hash == image_hash,
+            "hash_verified": hash_verified,
             "image_file": image_filename,
             "decode_method": DECODE_METHOD,
             "decode_hwaccel": DECODE_DETAILS["hwaccel"]
@@ -122,31 +191,25 @@ def process_video(args):
             frames[i]["frame_duration"] = duration
             frames[i]["fps"] = 1.0 / duration
 
-    # ---------------- VIDEO DURATION & VFR FPS ----------------
-    valid_timestamps = [f["timestamp_seconds"] for f in frames if f["timestamp_seconds"] is not None]
-    if len(valid_timestamps) >= 2:
-        total_duration = valid_timestamps[-1] - valid_timestamps[0]
-        total_frames = len(valid_timestamps)
-        average_fps = (total_frames - 1) / total_duration
+    valid_ts = [f["timestamp_seconds"] for f in frames if f["timestamp_seconds"] is not None]
+    if len(valid_ts) >= 2:
+        total_duration = valid_ts[-1] - valid_ts[0]
+        average_fps = (len(valid_ts) - 1) / total_duration
     else:
         total_duration = 0
         average_fps = 0
 
-    logger.info(f"[{video_name}] Total duration (seconds): {total_duration:.6f}")
-    logger.info(f"[{video_name}] Average FPS (VFR-corrected): {average_fps:.6f}")
-
-    # ---------------- CSV EXPORT ----------------
+    csv_path = os.path.join(video_dir, f"{video_name}_frames.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=frames[0].keys())
         writer.writeheader()
         writer.writerows(frames)
 
     logger.info(f"[{video_name}] Completed | Frames: {len(frames)}")
-    logging.shutdown()
 
     return {
         "video": video_path,
-        "output_dir": video_dir,
+        "mode": "decode",
         "frames": len(frames),
         "codec": codec.name,
         "codec_long": codec.long_name,
@@ -158,14 +221,27 @@ def process_video(args):
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Forensic Video Processor CLI")
+
     parser.add_argument("-i", "--input", required=True, help="Input directory or video file")
-    parser.add_argument("-o", "--output", required=True, help="Output directory for case")
+    parser.add_argument("-o", "--output", required=True, help="Output directory")
+
+    parser.add_argument(
+        "--no-frames",
+        action="store_true",
+        help="Decode frames but do not write image files"
+    )
+
+    parser.add_argument(
+        "--pts-only",
+        action="store_true",
+        help="PTS / metadata only (no frame decode)"
+    )
+
     args = parser.parse_args()
 
     input_path = args.input
     output_root = args.output
 
-    # ---------------- CASE DIRECTORY ----------------
     case_id = f"case_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     case_dir = os.path.join(output_root, case_id)
     os.makedirs(case_dir, exist_ok=True)
@@ -194,34 +270,38 @@ if __name__ == "__main__":
 
     video_files = get_video_files(input_path)
     if not video_files:
-        main_logger.error("No supported video files found.")
+        main_logger.error("No supported video files found")
         listener.stop()
         sys.exit(1)
 
-    main_logger.info(f"Videos found: {len(video_files)}")
-    main_logger.info(f"Using {MAX_WORKERS} worker process(es)")
+    worker_args = [
+        (
+            vp,
+            case_dir,
+            log_queue,
+            args.no_frames,
+            args.pts_only
+        )
+        for vp in video_files
+    ]
 
-    case_start_time = datetime.now(timezone.utc).isoformat()
-
-    # ---------------- MULTIPROCESSING POOL ----------------
-    worker_args = [(vp, case_dir, log_queue) for vp in video_files]
     with Pool(processes=MAX_WORKERS) as pool:
         results = pool.map(process_video, worker_args)
 
-    # ---------------- CASE PROVENANCE MANIFEST ----------------
-    videos_processed = [r for r in results if r]
     manifest = {
         "case_id": case_id,
-        "case_start_utc": case_start_time,
+        "case_start_utc": datetime.now(timezone.utc).isoformat(),
         "case_end_utc": datetime.now(timezone.utc).isoformat(),
         "platform": platform.platform(),
         "python_version": platform.python_version(),
         "pyav_version": av.__version__,
         "ffmpeg_libraries": av.library_versions,
-        "decode_method": DECODE_METHOD,
-        "hash_algorithm": HASH_ALGORITHM,
+        "processing_modes": {
+            "pts_only": args.pts_only,
+            "no_frames": args.no_frames
+        },
         "input_path": input_path,
-        "videos_processed": videos_processed,
+        "videos_processed": [r for r in results if r],
         "log_file": log_path
     }
 
