@@ -21,6 +21,17 @@ HASH_ALGORITHM = "sha256"
 DECODE_METHOD = "cpu"
 DECODE_DETAILS = {"requested": "cpu", "actual": "cpu", "hwaccel": None}
 
+# Mapping numeric -> string
+FRAME_TYPE_STR = {
+    0: "I",
+    1: "P",
+    2: "B",
+    3: "S",
+    4: "SI",
+    5: "SP",
+    6: "BI"
+}
+
 # ---------------- HELPER FUNCTIONS ----------------
 def get_video_files(path):
     if os.path.isfile(path):
@@ -43,13 +54,7 @@ def setup_worker_logging(log_queue):
 
 # ---------------- WORKER ----------------
 def process_video(args):
-    (
-        video_path,
-        case_dir,
-        log_queue,
-        no_frames,
-        pts_only
-    ) = args
+    video_path, case_dir, log_queue, no_frames, pts_only = args
 
     setup_worker_logging(log_queue)
     logger = logging.getLogger(__name__)
@@ -77,7 +82,7 @@ def process_video(args):
     codec = stream.codec_context.codec
 
     # ======================================================
-    # PTS-ONLY / METADATA-ONLY MODE (NO DECODE)
+    # PTS-ONLY MODE
     # ======================================================
     if pts_only:
         packets = []
@@ -122,7 +127,7 @@ def process_video(args):
         }
 
     # ======================================================
-    # DECODE-BASED MODES
+    # DECODE MODE
     # ======================================================
     if not no_frames:
         os.makedirs(frames_dir, exist_ok=True)
@@ -131,6 +136,7 @@ def process_video(args):
 
     for frame_index, frame in enumerate(container.decode(stream)):
 
+        # -------- Timestamp handling --------
         if frame.pts is not None and frame.time_base:
             timestamp_seconds = float(frame.pts * frame.time_base)
             pts_value = frame.pts
@@ -138,17 +144,28 @@ def process_video(args):
             timestamp_seconds = None
             pts_value = None
 
-        decoded_hash = None
-        image_hash = None
-        image_filename = None
-        hash_verified = None
+        # -------- Frame Type Detection --------
+        frame_type_num = None
+        frame_type = None
 
+        if frame.pict_type is not None:
+            frame_type_num = int(frame.pict_type)
+            if hasattr(frame.pict_type, "name"):
+                frame_type = frame.pict_type.name
+            else:
+                frame_type = FRAME_TYPE_STR.get(frame_type_num, "Unknown")
+
+        # -------- Frame Hashing --------
         try:
             rgb = frame.to_ndarray(format="rgb24")
         except Exception:
             continue
 
         decoded_hash = hashlib.sha256(rgb.tobytes()).hexdigest()
+
+        image_hash = None
+        image_filename = None
+        hash_verified = None
 
         if not no_frames:
             pts_label = pts_value if pts_value is not None else "no_pts"
@@ -167,11 +184,19 @@ def process_video(args):
             "timestamp_seconds": timestamp_seconds,
             "frame_duration": None,
             "fps": None,
+
+            # Frame type info
+            "frame_type_num": frame_type_num,
+            "frame_type": frame_type,
             "key_frame": bool(frame.key_frame),
+
+            # Hashes
             "decoded_sha256": decoded_hash,
             "image_sha256": image_hash,
             "hash_verified": hash_verified,
             "image_file": image_filename,
+
+            # Decode metadata
             "decode_method": DECODE_METHOD,
             "decode_hwaccel": DECODE_DETAILS["hwaccel"]
         })
@@ -199,13 +224,21 @@ def process_video(args):
         total_duration = 0
         average_fps = 0
 
+    # ---------------- CSV OUTPUT ----------------
     csv_path = os.path.join(video_dir, f"{video_name}_frames.csv")
+    fieldnames = list(frames[0].keys())
+
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=frames[0].keys())
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(frames)
 
-    logger.info(f"[{video_name}] Completed | Frames: {len(frames)}")
+    logger.info(
+        f"[{video_name}] Completed | "
+        f"Frames: {len(frames)} | "
+        f"Avg FPS: {average_fps:.3f} | "
+        f"Duration: {total_duration:.3f}s"
+    )
 
     return {
         "video": video_path,
@@ -224,18 +257,8 @@ if __name__ == "__main__":
 
     parser.add_argument("-i", "--input", required=True, help="Input directory or video file")
     parser.add_argument("-o", "--output", required=True, help="Output directory")
-
-    parser.add_argument(
-        "--no-frames",
-        action="store_true",
-        help="Decode frames but do not write image files"
-    )
-
-    parser.add_argument(
-        "--pts-only",
-        action="store_true",
-        help="PTS / metadata only (no frame decode)"
-    )
+    parser.add_argument("--no-frames", action="store_true", help="Decode frames but do not write image files")
+    parser.add_argument("--pts-only", action="store_true", help="PTS / metadata only (no frame decode)")
 
     args = parser.parse_args()
 
@@ -246,7 +269,6 @@ if __name__ == "__main__":
     case_dir = os.path.join(output_root, case_id)
     os.makedirs(case_dir, exist_ok=True)
 
-    # ---------------- LOGGING ----------------
     log_path = os.path.join(case_dir, "case_processing.log")
     manager = Manager()
     log_queue = manager.Queue()
@@ -275,13 +297,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     worker_args = [
-        (
-            vp,
-            case_dir,
-            log_queue,
-            args.no_frames,
-            args.pts_only
-        )
+        (vp, case_dir, log_queue, args.no_frames, args.pts_only)
         for vp in video_files
     ]
 
