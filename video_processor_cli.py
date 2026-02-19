@@ -77,7 +77,7 @@ def process_video(args):
     codec = stream.codec_context.codec
 
     # ======================================================
-    # PTS-ONLY / METADATA-ONLY MODE (NO DECODE)
+    # PTS-ONLY MODE
     # ======================================================
     if pts_only:
         packets = []
@@ -122,7 +122,7 @@ def process_video(args):
         }
 
     # ======================================================
-    # DECODE-BASED MODES
+    # DECODE MODE
     # ======================================================
     if not no_frames:
         os.makedirs(frames_dir, exist_ok=True)
@@ -205,7 +205,12 @@ def process_video(args):
         writer.writeheader()
         writer.writerows(frames)
 
-    logger.info(f"[{video_name}] Completed | Frames: {len(frames)}")
+    logger.info(
+        f"[{video_name}] Completed | "
+        f"Frames: {len(frames)} | "
+        f"Duration: {total_duration:.6f} sec | "
+        f"Average FPS: {average_fps:.6f}"
+    )
 
     return {
         "video": video_path,
@@ -222,20 +227,10 @@ def process_video(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Forensic Video Processor CLI")
 
-    parser.add_argument("-i", "--input", required=True, help="Input directory or video file")
-    parser.add_argument("-o", "--output", required=True, help="Output directory")
-
-    parser.add_argument(
-        "--no-frames",
-        action="store_true",
-        help="Decode frames but do not write image files"
-    )
-
-    parser.add_argument(
-        "--pts-only",
-        action="store_true",
-        help="PTS / metadata only (no frame decode)"
-    )
+    parser.add_argument("-i", "--input", required=True)
+    parser.add_argument("-o", "--output", required=True)
+    parser.add_argument("--no-frames", action="store_true")
+    parser.add_argument("--pts-only", action="store_true")
 
     args = parser.parse_args()
 
@@ -246,7 +241,6 @@ if __name__ == "__main__":
     case_dir = os.path.join(output_root, case_id)
     os.makedirs(case_dir, exist_ok=True)
 
-    # ---------------- LOGGING ----------------
     log_path = os.path.join(case_dir, "case_processing.log")
     manager = Manager()
     log_queue = manager.Queue()
@@ -275,19 +269,14 @@ if __name__ == "__main__":
         sys.exit(1)
 
     worker_args = [
-        (
-            vp,
-            case_dir,
-            log_queue,
-            args.no_frames,
-            args.pts_only
-        )
+        (vp, case_dir, log_queue, args.no_frames, args.pts_only)
         for vp in video_files
     ]
 
     with Pool(processes=MAX_WORKERS) as pool:
         results = pool.map(process_video, worker_args)
 
+    
     manifest = {
         "case_id": case_id,
         "case_start_utc": datetime.now(timezone.utc).isoformat(),
@@ -313,3 +302,4 @@ if __name__ == "__main__":
     main_logger.info(f"Case provenance manifest written to: {manifest_path}")
 
     listener.stop()
+    
