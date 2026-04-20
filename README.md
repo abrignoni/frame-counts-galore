@@ -68,7 +68,7 @@ FFMPEG needs to be installed on your system.
 
 ```bash
 # Basic syntax
-python forensic_video.py -i <input> -o <output> [options]
+python video_processor_cli.py -i <input> -o <output> [options]
 
 Required arguments:
   -i, --input <path>     Input video file or directory
