@@ -68,7 +68,7 @@ FFMPEG needs to be installed on your system.
 
 ```bash
 # Basic syntax
-python forensic_video.py -i <input> -o <output> [options]
+python video_processor_cli.py -i <input> -o <output> [options]
 
 Required arguments:
   -i, --input <path>     Input video file or directory
@@ -87,13 +87,13 @@ Notes:
 ## Example commands
 ```bash
 # Full forensic processing (default)
-python forensic_video.py -i video.mp4 -o output/
+python video_processor_cli.py -i video.mp4 -o output/
 
 # Decode-only (no image artifacts)
-python forensic_video.py -i video.mp4 -o output/ --no-frames
+python video_processor_cli.py -i video.mp4 -o output/ --no-frames
 
 # PTS-only / metadata-only (no decode)
-python forensic_video.py -i video.mp4 -o output/ --pts-only
+python video_processor_cli.py -i video.mp4 -o output/ --pts-only
 ```
 ## Forensic Notes
 
