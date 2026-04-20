@@ -310,36 +310,38 @@ if __name__ == "__main__":
     ]
 
     try:
-        with Pool(processes=MAX_WORKERS) as pool:
-            results = pool.map(process_video, worker_args)
-    except Exception as e:
-        main_logger.error(f"Multiprocessing pool error: {e}")
-        results = []
+        try:
+            with Pool(processes=MAX_WORKERS) as pool:
+                results = pool.map(process_video, worker_args)
+        except Exception as e:
+            main_logger.error(f"Multiprocessing pool error: {e}")
+            results = []
+
+        manifest = {
+            "case_id": case_id,
+            "case_start_utc": datetime.now(timezone.utc).isoformat(),
+            "case_end_utc": datetime.now(timezone.utc).isoformat(),
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "pyav_version": av.__version__,
+            "ffmpeg_libraries": av.library_versions,
+            "processing_modes": {
+                "pts_only": args.pts_only,
+                "no_frames": args.no_frames
+            },
+            "input_path": input_path,
+            "videos_processed": [r for r in results if r],
+            "log_file": log_path
+        }
+
+        manifest_path = os.path.join(case_dir, "case_provenance_manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+
+        main_logger.info("All videos processed")
+        main_logger.info(f"Case provenance manifest written to: {manifest_path}")
+
     finally:
-        # Ensure the listener is always stopped cleanly so the monitor
-        # thread (Thread-1) does not crash on an already-closed queue.
+        # Always stop the listener last — after every log message has been
+        # emitted — so nothing queued after pool completion is silently dropped.
         listener.stop()
-
-    manifest = {
-        "case_id": case_id,
-        "case_start_utc": datetime.now(timezone.utc).isoformat(),
-        "case_end_utc": datetime.now(timezone.utc).isoformat(),
-        "platform": platform.platform(),
-        "python_version": platform.python_version(),
-        "pyav_version": av.__version__,
-        "ffmpeg_libraries": av.library_versions,
-        "processing_modes": {
-            "pts_only": args.pts_only,
-            "no_frames": args.no_frames
-        },
-        "input_path": input_path,
-        "videos_processed": [r for r in results if r],
-        "log_file": log_path
-    }
-
-    manifest_path = os.path.join(case_dir, "case_provenance_manifest.json")
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-
-    main_logger.info("All videos processed")
-    main_logger.info(f"Case provenance manifest written to: {manifest_path}")
