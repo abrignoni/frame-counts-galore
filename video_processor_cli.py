@@ -36,8 +36,9 @@ def get_video_files(path):
     return files
 
 def setup_worker_logging(log_queue):
-    qh = QueueHandler(log_queue)
     logger = logging.getLogger()
+    logger.handlers.clear()  # Prevent handler accumulation across calls
+    qh = QueueHandler(log_queue)
     logger.setLevel(logging.INFO)
     logger.addHandler(qh)
 
@@ -82,21 +83,33 @@ def process_video(args):
     if pts_only:
         packets = []
 
-        for packet in container.demux(stream):
-            if packet.pts is None:
-                continue
+        try:
+            for packet in container.demux(stream):
+                if packet.pts is None:
+                    continue
 
-            packets.append({
-                "packet_index": len(packets),
-                "pts": packet.pts,
-                "dts": packet.dts,
-                "duration": packet.duration,
-                "time_base": str(packet.time_base),
-                "timestamp_seconds": float(packet.pts * packet.time_base),
-                "is_keyframe": packet.is_keyframe
-            })
-
-        container.close()
+                packets.append({
+                    "packet_index": len(packets),
+                    "pts": packet.pts,
+                    "dts": packet.dts,
+                    "duration": packet.duration,
+                    "time_base": str(packet.time_base),
+                    "timestamp_seconds": float(packet.pts * packet.time_base),
+                    "is_keyframe": packet.is_keyframe
+                })
+        except av.error.InvalidDataError as e:
+            # Corrupt or malformed packet in the stream; log and continue
+            # with whatever packets were successfully demuxed before the error.
+            logger.warning(
+                f"[{video_name}] InvalidDataError during demux at packet "
+                f"{len(packets)} — {e}. Continuing with {len(packets)} packets collected so far."
+            )
+        except av.AVError as e:
+            logger.error(f"[{video_name}] AVError during demux: {e}")
+            container.close()
+            return None
+        finally:
+            container.close()
 
         if not packets:
             logger.warning(f"[{video_name}] No packets with PTS found")
@@ -128,59 +141,78 @@ def process_video(args):
         os.makedirs(frames_dir, exist_ok=True)
 
     frames = []
+    corrupt_packets = 0
 
-    for frame_index, frame in enumerate(container.decode(stream)):
+    try:
+        for frame_index, frame in enumerate(container.decode(stream)):
 
-        if frame.pts is not None and frame.time_base:
-            timestamp_seconds = float(frame.pts * frame.time_base)
-            pts_value = frame.pts
-        else:
-            timestamp_seconds = None
-            pts_value = None
+            if frame.pts is not None and frame.time_base:
+                timestamp_seconds = float(frame.pts * frame.time_base)
+                pts_value = frame.pts
+            else:
+                timestamp_seconds = None
+                pts_value = None
 
-        decoded_hash = None
-        image_hash = None
-        image_filename = None
-        hash_verified = None
+            decoded_hash = None
+            image_hash = None
+            image_filename = None
+            hash_verified = None
 
-        try:
-            rgb = frame.to_ndarray(format="rgb24")
-        except Exception:
-            continue
+            try:
+                rgb = frame.to_ndarray(format="rgb24")
+            except Exception as e:
+                logger.warning(f"[{video_name}] Frame {frame_index}: could not convert to rgb24 — {e}. Skipping.")
+                continue
 
-        decoded_hash = hashlib.sha256(rgb.tobytes()).hexdigest()
+            decoded_hash = hashlib.sha256(rgb.tobytes()).hexdigest()
 
-        if not no_frames:
-            pts_label = pts_value if pts_value is not None else "no_pts"
-            image_filename = f"frame_{frame_index:06d}_pts_{pts_label}.png"
-            image_path = os.path.join(frames_dir, image_filename)
+            if not no_frames:
+                pts_label = pts_value if pts_value is not None else "no_pts"
+                image_filename = f"frame_{frame_index:06d}_pts_{pts_label}.png"
+                image_path = os.path.join(frames_dir, image_filename)
 
-            Image.fromarray(rgb).save(image_path)
-            reloaded = np.array(Image.open(image_path))
-            image_hash = hashlib.sha256(reloaded.tobytes()).hexdigest()
-            hash_verified = (decoded_hash == image_hash)
+                Image.fromarray(rgb).save(image_path)
+                reloaded = np.array(Image.open(image_path))
+                image_hash = hashlib.sha256(reloaded.tobytes()).hexdigest()
+                hash_verified = (decoded_hash == image_hash)
 
-        frames.append({
-            "frame_index": frame_index,
-            "pts": pts_value,
-            "time_base": str(frame.time_base) if frame.time_base else None,
-            "timestamp_seconds": timestamp_seconds,
-            "frame_duration": None,
-            "fps": None,
-            "key_frame": bool(frame.key_frame),
-            "decoded_sha256": decoded_hash,
-            "image_sha256": image_hash,
-            "hash_verified": hash_verified,
-            "image_file": image_filename,
-            "decode_method": DECODE_METHOD,
-            "decode_hwaccel": DECODE_DETAILS["hwaccel"]
-        })
+            frames.append({
+                "frame_index": frame_index,
+                "pts": pts_value,
+                "time_base": str(frame.time_base) if frame.time_base else None,
+                "timestamp_seconds": timestamp_seconds,
+                "frame_duration": None,
+                "fps": None,
+                "key_frame": bool(frame.key_frame),
+                "decoded_sha256": decoded_hash,
+                "image_sha256": image_hash,
+                "hash_verified": hash_verified,
+                "image_file": image_filename,
+                "decode_method": DECODE_METHOD,
+                "decode_hwaccel": DECODE_DETAILS["hwaccel"]
+            })
 
-    container.close()
+    except av.error.InvalidDataError as e:
+        # A corrupt or undecodable packet was encountered mid-stream.
+        # avcodec_send_packet() raised this; we log it and preserve all
+        # frames successfully decoded before the error occurred.
+        corrupt_packets += 1
+        logger.warning(
+            f"[{video_name}] InvalidDataError at frame {len(frames)} "
+            f"(avcodec_send_packet) — {e}. "
+            f"Recovered {len(frames)} frames before corrupt packet."
+        )
+    except av.AVError as e:
+        logger.error(f"[{video_name}] AVError during decode: {e}")
+    finally:
+        container.close()
 
     if not frames:
         logger.warning(f"[{video_name}] No frames decoded")
         return None
+
+    if corrupt_packets:
+        logger.warning(f"[{video_name}] Total corrupt packet errors encountered: {corrupt_packets}")
 
     # ---------------- TIMING CALCULATIONS ----------------
     for i in range(len(frames) - 1):
@@ -216,6 +248,7 @@ def process_video(args):
         "video": video_path,
         "mode": "decode",
         "frames": len(frames),
+        "corrupt_packets": corrupt_packets,
         "codec": codec.name,
         "codec_long": codec.long_name,
         "pixel_format": stream.codec_context.format.name if stream.codec_context.format else None,
@@ -252,11 +285,14 @@ if __name__ == "__main__":
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
 
-    listener = QueueListener(log_queue, file_handler, stream_handler)
+    # QueueListener is the single point that dispatches to both handlers,
+    # so the root logger must only have the QueueHandler — nothing else.
+    listener = QueueListener(log_queue, file_handler, stream_handler, respect_handler_level=True)
     listener.start()
 
     main_qh = QueueHandler(log_queue)
     main_logger = logging.getLogger()
+    main_logger.handlers.clear()  # Ensure no pre-existing handlers cause duplicate output
     main_logger.setLevel(logging.INFO)
     main_logger.addHandler(main_qh)
 
@@ -273,10 +309,17 @@ if __name__ == "__main__":
         for vp in video_files
     ]
 
-    with Pool(processes=MAX_WORKERS) as pool:
-        results = pool.map(process_video, worker_args)
+    try:
+        with Pool(processes=MAX_WORKERS) as pool:
+            results = pool.map(process_video, worker_args)
+    except Exception as e:
+        main_logger.error(f"Multiprocessing pool error: {e}")
+        results = []
+    finally:
+        # Ensure the listener is always stopped cleanly so the monitor
+        # thread (Thread-1) does not crash on an already-closed queue.
+        listener.stop()
 
-    
     manifest = {
         "case_id": case_id,
         "case_start_utc": datetime.now(timezone.utc).isoformat(),
@@ -300,6 +343,3 @@ if __name__ == "__main__":
 
     main_logger.info("All videos processed")
     main_logger.info(f"Case provenance manifest written to: {manifest_path}")
-
-    listener.stop()
-    
