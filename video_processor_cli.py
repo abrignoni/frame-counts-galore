@@ -48,7 +48,8 @@ def process_video(args):
         video_path,
         case_dir,
         log_queue,
-        no_frames
+        no_frames,
+        resolved_mode
     ) = args
 
     setup_worker_logging(log_queue)
@@ -188,7 +189,7 @@ def process_video(args):
 
     return {
         "video": video_path,
-        "mode": "decode",
+        "mode": resolved_mode,
         "frames": len(frames),
         "corrupt_packets": corrupt_packets,
         "codec": codec.name,
@@ -200,11 +201,34 @@ def process_video(args):
 
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Forensic Video Processor CLI")
+    parser = argparse.ArgumentParser(
+        description="Forensic Video Processor CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Modes (mutually exclusive):\n"
+            "  (default)        Full Forensic: decode all frames, write PNG images,\n"
+            "                   compute pixel hashes, verify round-trip integrity.\n"
+            "  --full-forensic  Explicit form of the default. Identical behaviour;\n"
+            "                   use when you want the mode recorded unambiguously.\n"
+            "  --no-frames      Decode-Only: decode frames and hash pixels, but do\n"
+            "                   not write image files. Saves disk space.\n"
+        )
+    )
 
-    parser.add_argument("-i", "--input", required=True)
-    parser.add_argument("-o", "--output", required=True)
-    parser.add_argument("--no-frames", action="store_true")
+    parser.add_argument("-i", "--input", required=True, help="Input video file or directory")
+    parser.add_argument("-o", "--output", required=True, help="Output directory for case results")
+
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--full-forensic",
+        action="store_true",
+        help="Full forensic mode: decode frames, write PNG images, hash pixels (default behaviour)"
+    )
+    mode_group.add_argument(
+        "--no-frames",
+        action="store_true",
+        help="Decode-only mode: decode frames and hash pixels, but do not write image files"
+    )
 
     args = parser.parse_args()
 
@@ -245,8 +269,10 @@ if __name__ == "__main__":
         listener.stop()
         sys.exit(1)
 
+    resolved_mode = "decode-only" if args.no_frames else "full-forensic"
+
     worker_args = [
-        (vp, case_dir, log_queue, args.no_frames)
+        (vp, case_dir, log_queue, args.no_frames, resolved_mode)
         for vp in video_files
     ]
 
@@ -267,7 +293,7 @@ if __name__ == "__main__":
             "pyav_version": av.__version__,
             "ffmpeg_libraries": av.library_versions,
             "processing_modes": {
-                "no_frames": args.no_frames
+                "mode": resolved_mode
             },
             "input_path": input_path,
             "videos_processed": [r for r in results if r],
