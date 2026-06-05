@@ -136,15 +136,3 @@ python video_processor_cli.py -i <input> -o <output> [options]
       4. **Record mode in manifest** for traceability
       
       ---
-      
-      ## Example Screens
-      <img width="1517" height="400" alt="Screenshot 2025-12-23 at 7 12 57 PM" src="https://github.com/user-attachments/assets/71730bf7-f7e6-4a69-85aa-d0be40b82b96" />
-      
-      Sample output folder structure for 3 processed files\
-      <img width="464" height="171" alt="Screenshot 2025-12-23 at 9 09 53 PM" src="https://github.com/user-attachments/assets/f6793348-b65a-477d-85f6-64f7294bd6b1" />
-      
-      Sample spreadsheet
-      <img width="1363" height="385" alt="Screenshot 2025-12-23 at 9 12 00 PM" src="https://github.com/user-attachments/assets/2a6bdf70-9758-4288-8e3e-ef88e65779cc" />
-      
-      Sample frames directory with files named by index and pts\
-      <img width="326" height="259" alt="Screenshot 2025-12-23 at 9 12 46 PM" src="https://github.com/user-attachments/assets/25f2778e-faec-49fd-9c1d-bd72fd7ae157" />
