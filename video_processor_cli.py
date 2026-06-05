@@ -21,22 +21,6 @@ HASH_ALGORITHM = "sha256"
 DECODE_METHOD = "cpu"
 DECODE_DETAILS = {"requested": "cpu", "actual": "cpu", "hwaccel": None}
 
-# Canonical warning text used in the sidecar file, manifest, and processing log
-# whenever --pts-only is active. Defined once here so all three locations stay
-# in sync if the wording is ever revised.
-PTS_COUNT_WARNING = (
-    "PTS-only packet count is not equivalent to decoded frame count. "
-    "Packet enumeration counts stream packets where pts != None as demuxed "
-    "by libavformat; decoded frame count counts frames successfully output "
-    "by avcodec after decoding. These values will differ: at minimum by 1, "
-    "because the final frame has no closing PTS boundary and its duration is "
-    "inferred rather than recorded. Additional divergence occurs with "
-    "B-frame reordering, sparse keyframe streams, corrupt packets, or "
-    "containers that interleave non-video packets on the video stream. "
-    "Do not use PTS packet count as a substitute for decoded frame count "
-    "for evidentiary purposes without verification in decode mode."
-)
-
 # ---------------- HELPER FUNCTIONS ----------------
 def get_video_files(path):
     if os.path.isfile(path):
@@ -64,8 +48,7 @@ def process_video(args):
         video_path,
         case_dir,
         log_queue,
-        no_frames,
-        pts_only
+        no_frames
     ) = args
 
     setup_worker_logging(log_queue)
@@ -92,101 +75,6 @@ def process_video(args):
 
     stream = video_streams[0]
     codec = stream.codec_context.codec
-
-    # ======================================================
-    # PTS-ONLY MODE
-    # ======================================================
-    if pts_only:
-        packets = []
-
-        try:
-            for packet in container.demux(stream):
-                if packet.pts is None:
-                    continue
-
-                packets.append({
-                    "packet_index": len(packets),
-                    "pts": packet.pts,
-                    "dts": packet.dts,
-                    "duration": packet.duration,
-                    "time_base": str(packet.time_base),
-                    "timestamp_seconds": float(packet.pts * packet.time_base),
-                    "is_keyframe": packet.is_keyframe
-                })
-        except av.error.InvalidDataError as e:
-            # Corrupt or malformed packet in the stream; log and continue
-            # with whatever packets were successfully demuxed before the error.
-            logger.warning(
-                f"[{video_name}] InvalidDataError during demux at packet "
-                f"{len(packets)} — {e}. Continuing with {len(packets)} packets collected so far."
-            )
-        except av.AVError as e:
-            logger.error(f"[{video_name}] AVError during demux: {e}")
-            container.close()
-            return None
-        finally:
-            container.close()
-
-        if not packets:
-            logger.warning(f"[{video_name}] No packets with PTS found")
-            return None
-
-        csv_path = os.path.join(video_dir, f"{video_name}_pts_only.csv")
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=packets[0].keys())
-            writer.writeheader()
-            writer.writerows(packets)
-
-        # --- Sidecar summary file ---
-        # Written alongside the CSV so the count limitation is visible to any
-        # analyst who opens the output folder, regardless of whether they
-        # review the manifest or the processing log.
-        summary_path = os.path.join(video_dir, f"{video_name}_pts_only_summary.txt")
-        with open(summary_path, "w", encoding="utf-8") as f:
-            f.write(f"PTS-Only Processing Summary\n")
-            f.write(f"===========================\n")
-            f.write(f"Video file      : {video_path}\n")
-            f.write(f"Processing mode : pts-only (--pts-only)\n")
-            f.write(f"Codec           : {codec.name} ({codec.long_name})\n")
-            f.write(f"Time base       : {stream.time_base}\n")
-            f.write(
-                f"Stream duration : "
-                f"{float(stream.duration * stream.time_base):.6f} sec\n"
-                if stream.duration else "Stream duration : unavailable\n"
-            )
-            f.write(f"\nPacket count (pts != None) : {len(packets)}\n")
-            f.write(f"\nFRAME COUNT LIMITATION\n")
-            f.write(f"----------------------\n")
-            f.write(f"{PTS_COUNT_WARNING}\n")
-
-        # --- WARNING log entry ---
-        logger.warning(
-            f"[{video_name}] PTS-only mode active. "
-            f"Packet count ({len(packets)}) is not comparable to decoded frame count. "
-            f"Run in decode mode to obtain a verified frame count. "
-            f"See {summary_path} for full methodological note."
-        )
-
-        logger.info(f"[{video_name}] PTS-only mode complete | Packets: {len(packets)}")
-
-        return {
-            "video": video_path,
-            "mode": "pts-only",
-            "packets": len(packets),
-            "codec": codec.name,
-            "codec_long": codec.long_name,
-            "time_base": str(stream.time_base),
-            "duration": float(stream.duration * stream.time_base)
-            if stream.duration else None,
-            # --- Manifest frame count note ---
-            # Included here so the chain-of-custody record explicitly documents
-            # why pts-only packet count diverges from decoded frame count.
-            "frame_count_notes": {
-                "pts_packet_count": len(packets),
-                "count_method": "demux_packet_enumeration",
-                "warning": PTS_COUNT_WARNING
-            }
-        }
 
     # ======================================================
     # DECODE MODE
@@ -317,7 +205,6 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--input", required=True)
     parser.add_argument("-o", "--output", required=True)
     parser.add_argument("--no-frames", action="store_true")
-    parser.add_argument("--pts-only", action="store_true")
 
     args = parser.parse_args()
 
@@ -359,7 +246,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     worker_args = [
-        (vp, case_dir, log_queue, args.no_frames, args.pts_only)
+        (vp, case_dir, log_queue, args.no_frames)
         for vp in video_files
     ]
 
@@ -380,7 +267,6 @@ if __name__ == "__main__":
             "pyav_version": av.__version__,
             "ffmpeg_libraries": av.library_versions,
             "processing_modes": {
-                "pts_only": args.pts_only,
                 "no_frames": args.no_frames
             },
             "input_path": input_path,
