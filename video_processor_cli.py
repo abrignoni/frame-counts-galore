@@ -26,6 +26,7 @@ DECODE_DETAILS = {"requested": "cpu", "actual": "cpu", "hwaccel": None}
 # in sync if the wording is ever revised.
 PTS_COUNT_WARNING = (
     "PTS-only packet count is not equivalent to decoded frame count. "
+    "Packet enumeration counts stream packets where pts != None as demuxed "
     "by libavformat; decoded frame count counts frames successfully output "
     "by avcodec after decoding. These values will differ: at minimum by 1, "
     "because the final frame has no closing PTS boundary and its duration is "
