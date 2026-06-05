@@ -107,7 +107,7 @@ def process_video(args):
                 logger.warning(f"[{video_name}] Frame {frame_index}: could not convert to rgb24 — {e}. Skipping.")
                 continue
 
-            decoded_hash = hashlib.sha256(rgb.tobytes()).hexdigest()
+            decoded_hash = hashlib.new(HASH_ALGORITHM, rgb.tobytes()).hexdigest()
 
             if not no_frames:
                 pts_label = pts_value if pts_value is not None else "no_pts"
@@ -116,7 +116,7 @@ def process_video(args):
 
                 Image.fromarray(rgb).save(image_path)
                 reloaded = np.array(Image.open(image_path))
-                image_hash = hashlib.sha256(reloaded.tobytes()).hexdigest()
+                image_hash = hashlib.new(HASH_ALGORITHM, reloaded.tobytes()).hexdigest()
                 hash_verified = (decoded_hash == image_hash)
 
             frames.append({
@@ -127,8 +127,8 @@ def process_video(args):
                 "frame_duration": None,
                 "fps": None,
                 "key_frame": bool(frame.key_frame),
-                "decoded_sha256": decoded_hash,
-                "image_sha256": image_hash,
+                f"decoded_{HASH_ALGORITHM}": decoded_hash,
+                f"image_{HASH_ALGORITHM}": image_hash,
                 "hash_verified": hash_verified,
                 "image_file": image_filename,
                 "decode_method": DECODE_METHOD,
@@ -158,6 +158,8 @@ def process_video(args):
         logger.warning(f"[{video_name}] Total corrupt packet errors encountered: {corrupt_packets}")
 
     # ---------------- TIMING CALCULATIONS ----------------
+    # Per-frame duration and FPS are computed from successive PTS differences.
+    # The final frame has no successor, so its duration and FPS remain None.
     for i in range(len(frames) - 1):
         t0 = frames[i]["timestamp_seconds"]
         t1 = frames[i + 1]["timestamp_seconds"]
@@ -168,8 +170,25 @@ def process_video(args):
 
     valid_ts = [f["timestamp_seconds"] for f in frames if f["timestamp_seconds"] is not None]
     if len(valid_ts) >= 2:
-        total_duration = valid_ts[-1] - valid_ts[0]
-        average_fps = (len(valid_ts) - 1) / total_duration
+        # Compute the mean inter-frame interval from all frames that have a
+        # measured duration (i.e. all but the last).
+        measured_durations = [
+            f["frame_duration"] for f in frames if f["frame_duration"] is not None
+        ]
+        if measured_durations:
+            mean_frame_duration = sum(measured_durations) / len(measured_durations)
+        else:
+            mean_frame_duration = 0
+
+        # True stream duration includes the final frame's display period.
+        # Use the mean frame duration as the best available estimate for that
+        # period, since no closing PTS boundary exists for the last frame.
+        pts_span = valid_ts[-1] - valid_ts[0]
+        total_duration = pts_span + mean_frame_duration
+
+        # average_fps is derived from total frame count and true duration so
+        # that average_fps * total_duration == len(frames) (within float precision).
+        average_fps = len(frames) / total_duration if total_duration > 0 else 0
     else:
         total_duration = 0
         average_fps = 0
@@ -235,7 +254,8 @@ if __name__ == "__main__":
     input_path = args.input
     output_root = args.output
 
-    case_id = f"case_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    case_start_utc = datetime.now(timezone.utc)
+    case_id = f"case_{case_start_utc.strftime('%Y%m%dT%H%M%SZ')}"
     case_dir = os.path.join(output_root, case_id)
     os.makedirs(case_dir, exist_ok=True)
 
@@ -286,7 +306,7 @@ if __name__ == "__main__":
 
         manifest = {
             "case_id": case_id,
-            "case_start_utc": datetime.now(timezone.utc).isoformat(),
+            "case_start_utc": case_start_utc.isoformat(),
             "case_end_utc": datetime.now(timezone.utc).isoformat(),
             "platform": platform.platform(),
             "python_version": platform.python_version(),
@@ -295,6 +315,7 @@ if __name__ == "__main__":
             "processing_modes": {
                 "mode": resolved_mode
             },
+            "hash_algorithm": HASH_ALGORITHM,
             "input_path": input_path,
             "videos_processed": [r for r in results if r],
             "log_file": log_path
