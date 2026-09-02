@@ -128,19 +128,19 @@ class App(tk.Tk):
     def _pick_file(self):
         p = filedialog.askopenfilename(title="Select a video file")
         if p:
-            self.input_var.set(p)
+            self.input_var.set(os.path.normpath(p))
             self._reset_estimate()
 
     def _pick_folder(self):
         p = filedialog.askdirectory(title="Select a folder of video files")
         if p:
-            self.input_var.set(p)
+            self.input_var.set(os.path.normpath(p))
             self._reset_estimate()
 
     def _pick_output(self):
         p = filedialog.askdirectory(title="Select the output directory")
         if p:
-            self.output_var.set(p)
+            self.output_var.set(os.path.normpath(p))
 
     # ---------------- helpers ----------------
     def _append_log(self, line):
@@ -279,6 +279,9 @@ class App(tk.Tk):
             path = self.output_var.get().strip()
         if not path or not os.path.isdir(path):
             return
+        # Tk dialogs return forward-slash paths on Windows, and os.startfile
+        # cannot open a forward-slash UNC path; normpath fixes both.
+        path = os.path.normpath(path)
         try:
             if platform.system() == "Windows":
                 os.startfile(path)  # noqa
