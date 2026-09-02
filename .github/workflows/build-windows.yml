@@ -75,6 +75,18 @@ jobs:
           assert len(glob.glob("smoke_out/case_*/smoke/frames/*.png")) == 60
           print("smoke test passed:", videos[0]["frames"], "frames, manifest status", manifest["status"])
 
+      - name: Check the graphical executable starts and stays up
+        shell: python
+        run: |
+          import subprocess, time
+          p = subprocess.Popen([r"dist\video_processor_gui.exe"])
+          time.sleep(20)
+          alive = p.poll() is None
+          if alive:
+              p.terminate()
+          print("gui process alive after 20 s:", alive, "| exit code:", p.poll())
+          assert alive, "video_processor_gui.exe exited early"
+
       - name: Upload executables
         uses: actions/upload-artifact@v4
         with:
