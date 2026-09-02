@@ -187,7 +187,10 @@ The decoder is pinned to a single thread (`decode_thread_type` and `decode_threa
   - Frame-level CSV with per-frame PTS, timestamps, hashes, and FPS data
 - The manifest records the tool version, PyAV and FFmpeg library versions, platform, mode, decoder threading, worker count, the files skipped because FFmpeg could not open them, the pre-run estimate if one was made, and per video: frames, frames decoded, packets read, packets rejected, codec, pixel format, duration, average FPS and the path of the CSV.
 - Each mode is **explicitly recorded** in the case manifest to maintain traceability and reproducibility.
-- Hashes are SHA-256 of the frame's rgb24 pixel data. In full forensic mode each PNG is read back after writing and hashed again; `hash_verified` in the CSV is true when the two hashes agree.
+- Each frame carries two SHA-256 hashes, and the manifest's `hash_columns` entry describes them:
+  - `native_sha256` is the hash of the decoder's own output in the stream's pixel format (`native_pixel_format`, for example `yuv420p`), plane by plane with line padding removed. Video decoders produce this data bit-exactly on every platform, and it is the same layout `ffmpeg -f framehash -hash sha256` hashes, so it can be compared between machines and against ffmpeg. `native_hash_note` says why it is empty on the rare pixel formats whose layout cannot be derived.
+  - `decoded_sha256` is the hash of the frame converted to rgb24, which is what the PNG contains. That conversion goes through libswscale, whose rounding differs between CPU architectures: the same file produced rgb24 values one level apart on an Apple Silicon Mac and an x64 Windows build of the same FFmpeg version. It is reproducible on the same platform, not across platforms. Use `native_sha256` to establish that two machines decoded the same frames.
+  - In full forensic mode each PNG is read back after writing and hashed again as `image_sha256`; `hash_verified` is true when it equals `decoded_sha256`.
 - Frames following a rejected packet up to the next keyframe are error-concealed by the decoder. Their hashes describe the decoder's concealment output, not data present in the file, and are only reproducible with the same decoder configuration.
 - Analysts should select modes based on **purpose, evidentiary requirements, and disk constraints**.
 
