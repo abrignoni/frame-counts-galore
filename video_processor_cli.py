@@ -20,7 +20,7 @@ import numpy as np
 import argparse
 
 # ---------------- CONFIG ----------------
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 MAX_WORKERS = max(cpu_count() - 1, 1)
 HASH_ALGORITHM = "sha256"
 DECODE_METHOD = "cpu"
@@ -148,6 +148,39 @@ def probe_video(video_path):
         container.close()
     return info
 
+def native_plane_bytes(frame):
+    """Return the decoded frame's planes as one tightly packed byte string,
+    plane by plane with line padding removed, plus a reason string when the
+    layout cannot be derived (in which case the bytes are None).
+
+    This is the decoder's own output in the stream's pixel format, before
+    any colour conversion. Video decoders produce it bit-exactly on every
+    platform, and it is the same layout ffmpeg hashes with
+    `-f framehash`, so the hash of these bytes can be compared across
+    machines and against ffmpeg.
+    """
+    fmt = frame.format
+    if fmt.has_palette or fmt.is_bit_stream or fmt.is_bayer:
+        return None, f"unsupported pixel format layout {fmt.name}"
+    comps = list(fmt.components)
+    out = []
+    for p, plane in enumerate(frame.planes):
+        pc = [c for c in comps if c.plane == p]
+        if not pc:
+            return None, f"plane {p} has no components in {fmt.name}"
+        widths = {c.width for c in pc}
+        heights = {c.height for c in pc}
+        if len(widths) != 1 or len(heights) != 1:
+            return None, f"mixed component sizes in plane {p} of {fmt.name}"
+        row_bytes = widths.pop() * sum((c.bits + 7) // 8 for c in pc)
+        rows = heights.pop()
+        buf = np.frombuffer(plane, dtype=np.uint8)
+        line_size = plane.line_size
+        if line_size < row_bytes or buf.size < line_size * rows:
+            return None, f"plane {p} buffer smaller than expected in {fmt.name}"
+        out.append(buf[: line_size * rows].reshape(rows, line_size)[:, :row_bytes].tobytes())
+    return b"".join(out), None
+
 def _hash_frame(frame, frame_index, frames_dir, no_frames):
     """Convert one decoded frame to rgb24, hash it, optionally write and
     round-trip verify a PNG. Returns the per-frame record, or raises if the
@@ -163,6 +196,14 @@ def _hash_frame(frame, frame_index, frames_dir, no_frames):
     image_filename = None
     hash_verified = None
 
+    native_bytes, native_reason = native_plane_bytes(frame)
+    native_hash = (
+        hashlib.new(HASH_ALGORITHM, native_bytes).hexdigest() if native_bytes is not None else None
+    )
+
+    # rgb24 conversion goes through libswscale, whose rounding differs between
+    # CPU architectures, so this hash (and the PNG) is reproducible on the same
+    # platform but not necessarily across platforms. The native hash above is.
     rgb = frame.to_ndarray(format="rgb24")
     decoded_hash = hashlib.new(HASH_ALGORITHM, rgb.tobytes()).hexdigest()
 
@@ -184,6 +225,9 @@ def _hash_frame(frame, frame_index, frames_dir, no_frames):
         "frame_duration": None,
         "fps": None,
         "key_frame": bool(frame.key_frame),
+        "native_pixel_format": frame.format.name,
+        f"native_{HASH_ALGORITHM}": native_hash,
+        "native_hash_note": native_reason,
         f"decoded_{HASH_ALGORITHM}": decoded_hash,
         f"image_{HASH_ALGORITHM}": image_hash,
         "hash_verified": hash_verified,
@@ -739,6 +783,14 @@ def run_case(
                 "workers": workers,
             },
             "hash_algorithm": HASH_ALGORITHM,
+            "hash_columns": {
+                f"native_{HASH_ALGORITHM}": "decoder output planes in the stream's pixel format, "
+                                            "line padding removed; comparable across platforms "
+                                            "and with ffmpeg -f framehash",
+                f"decoded_{HASH_ALGORITHM}": "rgb24 conversion of the frame by libswscale; "
+                                             "reproducible on the same platform only",
+                f"image_{HASH_ALGORITHM}": "rgb24 pixels read back from the written PNG",
+            },
             "input_path": input_path,
             "files_skipped": [{"path": p, "reason": r} for p, r in skipped],
             "pre_run_estimate": estimate,
