@@ -1,0 +1,173 @@
+name: Build executables
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: windows-11-arm
+            label: windows-arm64
+          - os: macos-latest
+            label: macos-arm64
+          - os: macos-15-intel
+            label: macos-x64
+          - os: ubuntu-22.04
+            label: linux-x64
+          - os: ubuntu-22.04-arm
+            label: linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches TOOL_VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: python
+        run: |
+          import os, re
+          src = open("video_processor_cli.py", encoding="utf-8").read()
+          version = re.search(r'^TOOL_VERSION = "([^"]+)"', src, re.M).group(1)
+          tag = os.environ["GITHUB_REF_NAME"]
+          assert tag == "v" + version, f"tag {tag} does not match TOOL_VERSION {version}"
+          print("tag", tag, "matches TOOL_VERSION")
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tk xvfb
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build command line executable
+        run: >
+          pyinstaller --noconfirm --clean --onefile --console
+          --name video_processor_cli --collect-all av
+          video_processor_cli.py
+
+      - name: Build graphical executable
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name video_processor_gui --collect-all av
+          --hidden-import video_processor_cli
+          video_processor_gui.py
+
+      - name: Run the command line executable on the damaged test videos
+        shell: python
+        run: |
+          import glob, json, os, subprocess, sys
+          exe = os.path.join("dist", "video_processor_cli" + (".exe" if os.name == "nt" else ""))
+          r = subprocess.run([exe, "-i", os.path.join("test_videos", "corrupt"), "-o", "smoke_out", "--estimate"],
+                             capture_output=True, text=True)
+          print(r.stdout[-4000:]); print(r.stderr[-4000:])
+          assert r.returncode == 0, "exe exited non-zero"
+          manifest = json.load(open(glob.glob("smoke_out/case_*/case_provenance_manifest.json")[0]))
+          expected = {
+              "h264_bframes_137_faststart.mp4": (137, 0),
+              "h264_bframes_137_faststart_midcorrupt.mp4": (135, 2),
+              "h264_nobframes_137_midcorrupt.mp4": (135, 2),
+              "h264_bframes_137_faststart_truncated.mp4": (96, 1),
+              "mpeg2_180_midcorrupt.ts": (178, 0),
+              "mpeg2_180_truncated.ts": (71, 0),
+          }
+          got = {os.path.basename(v["video"]): (v["frames"], v["corrupt_packets"]) for v in manifest["videos_processed"]}
+          assert got == expected, f"expected {expected}\ngot {got}"
+          skipped = [os.path.basename(s["path"]) for s in manifest["files_skipped"]]
+          assert skipped == ["h264_nobframes_137_truncated.mp4"], skipped
+          pngs = len(glob.glob("smoke_out/case_*/*/frames/*.png"))
+          assert pngs == sum(f for f, _ in expected.values()), pngs
+          print("test videos decoded with the expected counts on", manifest["platform"])
+
+      - name: Check the graphical executable starts and stays up
+        shell: python
+        run: |
+          import os, subprocess, sys, time
+          if os.name == "nt":
+              cmd = [os.path.join("dist", "video_processor_gui.exe")]
+          elif sys.platform == "darwin":
+              cmd = [os.path.join("dist", "video_processor_gui")]
+          else:
+              cmd = ["xvfb-run", "-a", os.path.join("dist", "video_processor_gui")]
+          p = subprocess.Popen(cmd)
+          time.sleep(20)
+          alive = p.poll() is None
+          if alive:
+              p.terminate()
+          print("gui process alive after 20 s:", alive, "| exit code:", p.poll())
+          assert alive, "video_processor_gui exited early"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          name="frame-counts-galore-${GITHUB_REF_NAME//\//-}-${{ matrix.label }}"
+          mkdir -p "pkg/$name"
+          cp packaging/README.txt "pkg/$name/README.txt"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp dist/video_processor_cli.exe dist/video_processor_gui.exe "pkg/$name/"
+            (cd "pkg/$name" && sha256sum video_processor_*.exe > SHA256SUMS.txt)
+            (cd pkg && 7z a -bd "../$name.zip" "$name" > /dev/null)
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            cp dist/video_processor_cli "pkg/$name/"
+            cp -R dist/video_processor_gui.app "pkg/$name/"
+            (cd "pkg/$name" && shasum -a 256 video_processor_cli video_processor_gui.app/Contents/MacOS/video_processor_gui > SHA256SUMS.txt)
+            (cd pkg && ditto -c -k --keepParent "$name" "../$name.zip")
+          else
+            cp dist/video_processor_cli dist/video_processor_gui "pkg/$name/"
+            (cd "pkg/$name" && sha256sum video_processor_cli video_processor_gui > SHA256SUMS.txt)
+            (cd pkg && tar -czf "../$name.tar.gz" "$name")
+          fi
+          ls -la "$name".*
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: frame-counts-galore-${{ matrix.label }}
+          path: |
+            frame-counts-galore-*.zip
+            frame-counts-galore-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums of the archives
+        run: |
+          cd artifacts && sha256sum frame-counts-galore-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sed "s/{{VERSION}}/${GITHUB_REF_NAME}/g" packaging/release-notes.md > notes.md
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --title "Forensic Video Processor ${GITHUB_REF_NAME}" \
+            --notes-file notes.md

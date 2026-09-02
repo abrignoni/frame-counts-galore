@@ -29,7 +29,9 @@ FFmpeg needs to be installed on your system. The graphical front end uses tkinte
 7. [Graphical Front End](#graphical-front-end)
 8. [How Frames Are Counted](#how-frames-are-counted)
 9. [Forensic Notes](#forensic-notes)
-10. [Decision Tree for Analysts](#decision-tree-for-analysts)
+10. [Prebuilt Executables](#prebuilt-executables)
+11. [Test Videos](#test-videos)
+12. [Decision Tree for Analysts](#decision-tree-for-analysts)
 
 ---
 
@@ -193,6 +195,28 @@ The decoder is pinned to a single thread (`decode_thread_type` and `decode_threa
   - In full forensic mode each PNG is read back after writing and hashed again as `image_sha256`; `hash_verified` is true when it equals `decoded_sha256`.
 - Frames following a rejected packet up to the next keyframe are error-concealed by the decoder. Their hashes describe the decoder's concealment output, not data present in the file, and are only reproducible with the same decoder configuration.
 - Analysts should select modes based on **purpose, evidentiary requirements, and disk constraints**.
+
+---
+
+## Prebuilt Executables
+
+Each [release](https://github.com/abrignoni/frame-counts-galore/releases) carries one archive per platform with the graphical front end, the command line tool, a README and SHA256 checksums: Windows x64 and ARM64, macOS Apple Silicon and Intel, and Linux x64 and ARM64. Python, PyAV and the FFmpeg libraries are bundled, so nothing needs to be installed and no system FFmpeg is used. The archives are built by the `Build executables` GitHub Actions workflow on a GitHub-hosted runner of each platform, which also runs the command line executable against `test_videos/corrupt` and checks the frame counts and rejected packet counts before packaging.
+
+Things to know before running one:
+
+- **They are not code-signed or notarised.** Windows SmartScreen warns on first launch (More info, then Run anyway). macOS Gatekeeper refuses the app until you right-click it and choose Open, or clear the quarantine attribute with `xattr -dr com.apple.quarantine <file>`. The README inside each archive repeats the exact steps.
+- Single-file executables unpack to a temporary folder on every start, so the first launch can take 10 to 20 seconds.
+- The Linux builds are made on Ubuntu 22.04 and need glibc 2.35 or newer; the graphical front end needs an X11 or XWayland display.
+- Verify the download against `SHA256SUMS.txt` before use. The release page also lists the checksum of every archive.
+- The manifest records the platform, Python and FFmpeg library versions the run used, so a report can state which build produced it.
+
+To build the executables yourself, install the requirements plus `pyinstaller` and run the two `pyinstaller` commands from `.github/workflows/build-executables.yml`.
+
+---
+
+## Test Videos
+
+`test_videos/` holds small videos with known frame counts, generated with ffmpeg by `tools/make_test_videos.sh`: `synth/` covers H.264 with and without B-frames, HEVC, VP9, MPEG-2, MJPEG, ProRes, MKV, WebM and MPEG-TS containers, odd dimensions, a single frame, variable frame rate and 1080p, and `corrupt/` holds damaged and truncated copies. The number in each `synth/` filename is the exact frame count, and `test_videos/README.md` lists the expected frames and rejected packets for every damaged file. Point the tool at either folder to check an installation.
 
 ---
 
