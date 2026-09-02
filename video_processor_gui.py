@@ -101,7 +101,7 @@ class App(tk.Tk):
 
         est_frame = ttk.LabelFrame(self, text="Estimate")
         est_frame.pack(fill="x", **pad)
-        self.estimate_text = tk.Text(est_frame, height=6, wrap="word", state="disabled")
+        self.estimate_text = ScrolledText(est_frame, height=6, wrap="word", state="disabled")
         self.estimate_text.pack(fill="x", padx=4, pady=4)
 
         prog = ttk.LabelFrame(self, text="Progress")
@@ -112,7 +112,7 @@ class App(tk.Tk):
         self.progress.pack(fill="x", padx=4, pady=2)
         cols = ("video", "status", "frames", "estimated", "rejected")
         self.tree = ttk.Treeview(prog, columns=cols, show="headings", height=6)
-        for c, w in zip(cols, (380, 110, 90, 90, 130)):
+        for c, w in zip(cols, (330, 170, 80, 90, 120)):
             self.tree.heading(c, text={"video": "Video", "status": "Status", "frames": "Frames",
                                        "estimated": "Estimated", "rejected": "Rejected packets"}[c])
             self.tree.column(c, width=w, anchor="w" if c == "video" else "e")
