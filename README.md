@@ -205,7 +205,7 @@ Each [release](https://github.com/abrignoni/frame-counts-galore/releases) carrie
 Things to know before running one:
 
 - **They are not code-signed or notarised.** Windows SmartScreen warns on first launch (More info, then Run anyway). macOS Gatekeeper refuses the app until you right-click it and choose Open, or clear the quarantine attribute with `xattr -dr com.apple.quarantine <file>`. The README inside each archive repeats the exact steps.
-- Single-file executables unpack to a temporary folder on every start, so the first launch takes a few seconds.
+- Single-file executables unpack to a temporary folder on every start, so the first launch can take 10 to 20 seconds.
 - The Linux builds are made on Ubuntu 22.04 and need glibc 2.35 or newer; the graphical front end needs an X11 or XWayland display.
 - Verify the download against `SHA256SUMS.txt` before use. The release page also lists the checksum of every archive.
 - The manifest records the platform, Python and FFmpeg library versions the run used, so a report can state which build produced it.

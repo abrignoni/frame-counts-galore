@@ -3,8 +3,6 @@ name: Build executables
 on:
   workflow_dispatch:
   push:
-    branches:
-      - feat/test-videos-and-releases
     tags:
       - "v*"
 

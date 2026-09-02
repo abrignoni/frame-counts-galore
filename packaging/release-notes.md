@@ -14,7 +14,7 @@ Every archive was built by the `Build executables` workflow on a GitHub-hosted r
 **Caveats**
 
 - The executables are not code-signed or notarised. Windows SmartScreen will warn on first launch (choose More info, then Run anyway). macOS Gatekeeper refuses the app until you right-click it and choose Open, or remove the quarantine attribute with `xattr -dr com.apple.quarantine`. The README inside each archive has the exact steps.
-- Single-file executables unpack to a temporary folder on every start, so the first launch takes a few seconds.
+- Single-file executables unpack to a temporary folder on every start, so the first launch can take 10 to 20 seconds.
 - The Linux builds need an X11 or XWayland display for the graphical front end.
 - Full forensic mode writes one PNG per frame, roughly 1 to 2 MB each at 1080p. Use the estimate before processing long material.
 - The `native_sha256` frame hash is comparable between platforms and with `ffmpeg -f framehash`. The `decoded_sha256` (rgb24) hash reproduces on the same platform only; see the README for why.

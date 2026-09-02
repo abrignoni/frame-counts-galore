@@ -12,8 +12,8 @@ Contents
   SHA256SUMS.txt             Checksums of the files above.
 
 Each executable is a single file with Python, PyAV and the FFmpeg libraries bundled.
-No installation is needed and no system FFmpeg is used. The first start takes a few
-seconds while the file unpacks to a temporary folder.
+No installation is needed and no system FFmpeg is used. The first start can take 10 to
+20 seconds while the file unpacks to a temporary folder; later starts are faster.
 
 The executables are NOT code-signed or notarised.
   Windows: SmartScreen warns on first launch. Choose "More info", then "Run anyway".
