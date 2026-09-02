@@ -3,6 +3,8 @@ name: Build Windows executables
 on:
   workflow_dispatch:
   push:
+    branches:
+      - feat/windows-build
     tags:
       - "v*"
 
