@@ -157,11 +157,12 @@ python video_processor_gui.py
 The window offers the same two modes and calls the same processing code as the command line tool, so the case folder, CSV files, PNG images, log and manifest are identical. It adds:
 
 - File and folder pickers for the input and the output directory.
-- An **Estimate** button that shows the per-video and total estimate described above. In full forensic mode the Start button asks for confirmation when the estimate is 5 GB of PNGs or more.
+- An **Estimate** button that shows the per-video and total estimate described above. In full forensic mode, once an estimate has been made in that mode, the Start button asks for confirmation when the estimate comes to 5 GB of PNGs or more. Starting a run without pressing Estimate first does not prompt.
 - A progress table with one row per video (status, frames decoded so far, estimated frames, packets rejected by the decoder), an overall progress bar, elapsed time and a remaining-time figure derived from the metadata frame count.
 - A live view of the processing log.
 - A **Stop** button. Stopping terminates the workers; the manifest is still written and records `"status": "cancelled"`.
 - An **Open Output Folder** button once the run has finished.
+- A read-only **Workers** figure beside the mode buttons, one less than the number of CPU cores, and never below one. It is the same worker count the command line tool uses, and neither front end lets you change it.
 
 ---
 
