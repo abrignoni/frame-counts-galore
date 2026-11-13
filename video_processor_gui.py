@@ -499,8 +499,10 @@ if ctk is not None:
             ctk.set_appearance_mode("system")
             ctk.set_default_color_theme("blue")
             ctk.CTk.__init__(self, fg_color=BG)
-            self.minsize(960, 760)
-            self.geometry(f"1040x{min(900, self.winfo_screenheight() - 120)}")
+            # fits a 1366x768 screen: the panels share what height there is and the log takes the rest
+            high = self.winfo_screenheight()
+            self.minsize(900, min(640, high - 100))
+            self.geometry(f"1040x{max(560, min(900, high - 120))}")
             self._start()
 
         def _build(self):
@@ -588,35 +590,52 @@ if ctk is not None:
             self.btn_open = ghost(buttons, "Open Output Folder", self._open_output, state="disabled")
             self.btn_open.pack(side="right")
 
-            c = card(body, "Estimate")
-            self.estimate_text = ctk.CTkTextbox(c, height=96, font=f_small, fg_color=SOFT, text_color=INK,
-                                                corner_radius=10, wrap="word", border_width=0)
-            self.estimate_text.configure(state="disabled")
-            self.estimate_text.pack(fill="x")
-
-            c = card(body, "Progress")
             self.status_var = tk.StringVar(value="Idle")
-            ctk.CTkLabel(c, textvariable=self.status_var, font=f_body, text_color=MUTED, anchor="w",
-                         justify="left", wraplength=900).pack(fill="x")
-            self.progress = Progress(c, height=8, corner_radius=4, progress_color=ACCENT, fg_color=SOFT)
+            ctk.CTkLabel(body, textvariable=self.status_var, font=f_body, text_color=MUTED, anchor="w",
+                         justify="left", wraplength=960).pack(fill="x")
+            self.progress = Progress(body, height=8, corner_radius=4, progress_color=ACCENT, fg_color=SOFT)
             self.progress.set(0)
             self.progress.pack(fill="x", pady=(6, 10))
+
+            # progress, estimate and log share one panel, so the window fits a 768-pixel-high screen;
+            # each comes to the front when a run or an estimate starts
+            self.tabs = ctk.CTkTabview(body, fg_color=CARD, corner_radius=14, border_width=1, border_color=LINE,
+                                       segmented_button_selected_color=ACCENT,
+                                       segmented_button_selected_hover_color=ACCENT_HOVER,
+                                       text_color=("#FFFFFF", "#FFFFFF"), height=200)
+            self.tabs.pack(fill="both", expand=True)
+            table = ctk.CTkFrame(self.tabs.add("Progress"), fg_color="transparent")
+            table.pack(fill="both", expand=True, padx=6, pady=(0, 6))
             cols = ("video", "status", "frames", "estimated", "rejected")
-            self.tree = ttk.Treeview(c, columns=cols, show="headings", height=5, style="Galore.Treeview")
+            self.tree = ttk.Treeview(table, columns=cols, show="headings", style="Galore.Treeview")
             for col, w in zip(cols, (330, 170, 80, 90, 120)):
                 self.tree.heading(col, text={"video": "Video", "status": "Status", "frames": "Frames",
                                              "estimated": "Estimated", "rejected": "Rejected packets"}[col])
                 self.tree.column(col, width=w, anchor="w" if col == "video" else "e")
-            self.tree.pack(fill="x")
+            scroll = ctk.CTkScrollbar(table, command=self.tree.yview)
+            self.tree.configure(yscrollcommand=scroll.set)
+            scroll.pack(side="right", fill="y")
+            self.tree.pack(side="left", fill="both", expand=True)
             self._tree_colours()
-
-            c = card(body, "Log", expand=True)
-            c.master.pack_configure(fill="both", expand=True, pady=0)
-            self.log = ctk.CTkTextbox(c, font=ctk.CTkFont(family="Menlo" if platform.system() == "Darwin" else "Consolas",
-                                                          size=12),
+            self.estimate_text = ctk.CTkTextbox(self.tabs.add("Estimate"), font=f_small, fg_color=SOFT, text_color=INK,
+                                                corner_radius=10, wrap="word", border_width=0)
+            self.estimate_text.configure(state="disabled")
+            self.estimate_text.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+            self.log = ctk.CTkTextbox(self.tabs.add("Log"),
+                                      font=ctk.CTkFont(family="Menlo" if platform.system() == "Darwin" else "Consolas",
+                                                       size=12),
                                       fg_color=SOFT, text_color=INK, corner_radius=10, wrap="none", border_width=0)
             self.log.configure(state="disabled")
-            self.log.pack(fill="both", expand=True)
+            self.log.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+            self.tabs.set("Progress")
+
+        def _start_estimate(self):
+            self.tabs.set("Estimate")
+            Runner._start_estimate(self)
+
+        def _start_run(self):
+            self.tabs.set("Progress")
+            Runner._start_run(self)
 
         def _pick_theme(self, value):
             ctk.set_appearance_mode("dark" if value == "Dark" else "light")

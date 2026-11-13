@@ -54,7 +54,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller
+          # CustomTkinter pinned to the version the window was tested with (see THIRD_PARTY_NOTICES.md)
+          python -m pip install -r requirements.txt pyinstaller customtkinter==6.0.0
 
       - name: Build command line executable
         run: >
