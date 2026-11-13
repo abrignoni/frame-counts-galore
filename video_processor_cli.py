@@ -14,7 +14,8 @@ import threading
 import time
 from logging.handlers import QueueHandler, QueueListener
 from datetime import datetime, timezone
-from multiprocessing import Pool, cpu_count, Manager
+import multiprocessing
+from multiprocessing import cpu_count
 from PIL import Image
 import numpy as np
 import argparse
@@ -24,6 +25,10 @@ TOOL_VERSION = "1.2.0"
 MAX_WORKERS = max(cpu_count() - 1, 1)
 HASH_ALGORITHM = "sha256"
 DECODE_METHOD = "cpu"
+# Workers start with "spawn" on every platform. With "fork" (the Linux default
+# before Python 3.14), a worker inherits the parent's FFmpeg state after the
+# --estimate pass and hangs in swscale with av 19.
+MP_CONTEXT = multiprocessing.get_context("spawn")
 DECODE_DETAILS = {"requested": "cpu", "actual": "cpu", "hwaccel": None}
 # Decoder threading. The decoder is pinned to one thread so that decoding
 # does not depend on the machine's core count. Measured on H.264 samples:
@@ -659,7 +664,7 @@ def run_case(
     os.makedirs(case_dir, exist_ok=True)
 
     log_path = os.path.join(case_dir, "case_processing.log")
-    manager = Manager()
+    manager = MP_CONTEXT.Manager()
     log_queue = manager.Queue()
     progress_queue = manager.Queue() if progress_callback else None
 
@@ -750,7 +755,7 @@ def run_case(
                 drain_thread.start()
 
             try:
-                with Pool(processes=workers) as pool:
+                with MP_CONTEXT.Pool(processes=workers) as pool:
                     async_result = pool.map_async(process_video, worker_args)
                     while not async_result.ready():
                         async_result.wait(0.25)
