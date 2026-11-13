@@ -21,7 +21,7 @@ import numpy as np
 import argparse
 
 # ---------------- CONFIG ----------------
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 MAX_WORKERS = max(cpu_count() - 1, 1)
 HASH_ALGORITHM = "sha256"
 DECODE_METHOD = "cpu"
