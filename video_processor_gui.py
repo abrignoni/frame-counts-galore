@@ -7,6 +7,11 @@ folder, CSV files, PNG images, log and provenance manifest as the command
 line tool. The window adds: file and folder pickers, a pre-run estimate of
 frames, time and disk use, live progress, the processing log, and a stop
 button.
+
+The window is drawn with CustomTkinter (MIT licence) when it is installed, in
+the look of AppWalk and the probes: a header with the logo and a light/dark
+switch, panels, and one blue button. Without it the plain Tk window opens;
+both run the same code underneath (the Runner class).
 """
 
 import logging
@@ -23,6 +28,53 @@ from tkinter.scrolledtext import ScrolledText
 
 import video_processor_cli as vpc
 
+try:
+    import customtkinter as ctk
+except ImportError:
+    ctk = None
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ASSETS = os.path.join(getattr(sys, "_MEIPASS", HERE), "assets")
+LOGO = "frame-counts-galore"
+
+
+def window_icon(win):
+    """The logo as the icon of the window (dock, taskbar, title bar). On Windows the .ico goes on
+    through iconbitmap first: CustomTkinter puts its own icon on a window about 200 ms after it
+    opens unless iconbitmap was called (customtkinter 6.0.0, ctk_tk.py). Returns True when set."""
+    try:
+        icons = [tk.PhotoImage(master=win, file=os.path.join(ASSETS, f"{LOGO}_{s}.png")) for s in (256, 64, 32)]
+        win.iconphoto(True, *icons)
+        win._logo_icons = icons   # Tk drops an image nothing in Python holds
+    except (tk.TclError, OSError):
+        return False
+    if platform.system() == "Windows":
+        try:
+            win.iconbitmap(os.path.join(ASSETS, f"{LOGO}.ico"))
+        except tk.TclError:
+            pass
+    return True
+
+
+def smoke_check(win, kind):
+    """For a packaged build: when FRAMES_GALORE_SMOKE names a file, the window opens, writes there
+    what it loaded, and closes. Nothing else changes."""
+    path = os.environ.get("FRAMES_GALORE_SMOKE")
+    if not path:
+        return
+
+    def report():
+        import json
+        try:
+            facts = {"window": kind, "tk": str(tk.TkVersion), "logo": getattr(win, "logo", None) is not None,
+                     "icon": bool(getattr(win, "_logo_icons", None)), "assets": os.path.isdir(ASSETS),
+                     "frozen": bool(getattr(sys, "frozen", False))}
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(facts, f)
+        finally:
+            win.destroy()
+    win.after(2000, report)
+
 
 class QueueLogHandler(logging.Handler):
     """Puts formatted log lines on a queue the Tk thread drains."""
@@ -38,14 +90,14 @@ class QueueLogHandler(logging.Handler):
             pass
 
 
-class App(tk.Tk):
+class Runner:
+    """What the window does, whichever toolkit draws it: the subclass gives _build()."""
     POLL_MS = 150
 
-    def __init__(self):
-        super().__init__()
+    def _start(self):
         self.title(f"Forensic Video Processor {vpc.TOOL_VERSION}")
-        self.minsize(900, 640)
-
+        self.logo = None
+        window_icon(self)
         self.events = queue.Queue()
         self.worker = None
         self.cancel_event = None
@@ -60,69 +112,6 @@ class App(tk.Tk):
         self.after(self.POLL_MS, self._poll)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # ---------------- layout ----------------
-    def _build(self):
-        pad = {"padx": 6, "pady": 4}
-        top = ttk.Frame(self)
-        top.pack(fill="x", **pad)
-        top.columnconfigure(1, weight=1)
-
-        ttk.Label(top, text="Input:").grid(row=0, column=0, sticky="w")
-        self.input_var = tk.StringVar()
-        ttk.Entry(top, textvariable=self.input_var).grid(row=0, column=1, sticky="ew", padx=4)
-        ttk.Button(top, text="File...", command=self._pick_file).grid(row=0, column=2)
-        ttk.Button(top, text="Folder...", command=self._pick_folder).grid(row=0, column=3, padx=(4, 0))
-
-        ttk.Label(top, text="Output:").grid(row=1, column=0, sticky="w")
-        self.output_var = tk.StringVar()
-        ttk.Entry(top, textvariable=self.output_var).grid(row=1, column=1, sticky="ew", padx=4)
-        ttk.Button(top, text="Browse...", command=self._pick_output).grid(row=1, column=2, columnspan=2, sticky="ew")
-
-        modes = ttk.Frame(self)
-        modes.pack(fill="x", **pad)
-        ttk.Label(modes, text="Mode:").pack(side="left")
-        self.mode_var = tk.StringVar(value="full-forensic")
-        ttk.Radiobutton(modes, text="Full Forensic (write PNG frames)", variable=self.mode_var,
-                        value="full-forensic").pack(side="left", padx=8)
-        ttk.Radiobutton(modes, text="Decode-Only (hashes, no images)", variable=self.mode_var,
-                        value="decode-only").pack(side="left", padx=8)
-        ttk.Label(modes, text=f"Workers: {vpc.MAX_WORKERS}").pack(side="right")
-
-        buttons = ttk.Frame(self)
-        buttons.pack(fill="x", **pad)
-        self.btn_estimate = ttk.Button(buttons, text="Estimate", command=self._start_estimate)
-        self.btn_estimate.pack(side="left")
-        self.btn_start = ttk.Button(buttons, text="Start", command=self._start_run)
-        self.btn_start.pack(side="left", padx=6)
-        self.btn_stop = ttk.Button(buttons, text="Stop", command=self._stop_run, state="disabled")
-        self.btn_stop.pack(side="left")
-        self.btn_open = ttk.Button(buttons, text="Open Output Folder", command=self._open_output, state="disabled")
-        self.btn_open.pack(side="right")
-
-        est_frame = ttk.LabelFrame(self, text="Estimate")
-        est_frame.pack(fill="x", **pad)
-        self.estimate_text = ScrolledText(est_frame, height=6, wrap="word", state="disabled")
-        self.estimate_text.pack(fill="x", padx=4, pady=4)
-
-        prog = ttk.LabelFrame(self, text="Progress")
-        prog.pack(fill="both", expand=False, **pad)
-        self.status_var = tk.StringVar(value="Idle")
-        ttk.Label(prog, textvariable=self.status_var).pack(anchor="w", padx=4)
-        self.progress = ttk.Progressbar(prog, mode="determinate", maximum=1000)
-        self.progress.pack(fill="x", padx=4, pady=2)
-        cols = ("video", "status", "frames", "estimated", "rejected")
-        self.tree = ttk.Treeview(prog, columns=cols, show="headings", height=6)
-        for c, w in zip(cols, (330, 170, 80, 90, 120)):
-            self.tree.heading(c, text={"video": "Video", "status": "Status", "frames": "Frames",
-                                       "estimated": "Estimated", "rejected": "Rejected packets"}[c])
-            self.tree.column(c, width=w, anchor="w" if c == "video" else "e")
-        self.tree.pack(fill="both", expand=True, padx=4, pady=4)
-
-        logf = ttk.LabelFrame(self, text="Log")
-        logf.pack(fill="both", expand=True, **pad)
-        self.log = ScrolledText(logf, height=12, wrap="none", state="disabled",
-                                font=("Menlo" if platform.system() == "Darwin" else "Consolas", 10))
-        self.log.pack(fill="both", expand=True, padx=4, pady=4)
 
     # ---------------- pickers ----------------
     def _pick_file(self):
@@ -147,6 +136,7 @@ class App(tk.Tk):
         self.log.configure(state="normal")
         self.log.insert("end", line + "\n")
         self.log.see("end")
+        self.log.yview_moveto(1.0)   # the last line at the bottom, not alone at the top
         self.log.configure(state="disabled")
 
     def _set_estimate_text(self, text):
@@ -400,8 +390,263 @@ class App(tk.Tk):
         self.destroy()
 
 
+class App(Runner, tk.Tk):
+    """The plain Tk window, opened when CustomTkinter is not installed."""
+
+    def __init__(self):
+        tk.Tk.__init__(self)
+        self.minsize(900, 640)
+        self._start()
+
+    def _build(self):
+        pad = {"padx": 6, "pady": 4}
+        top = ttk.Frame(self)
+        top.pack(fill="x", **pad)
+        top.columnconfigure(1, weight=1)
+
+        ttk.Label(top, text="Input:").grid(row=0, column=0, sticky="w")
+        self.input_var = tk.StringVar()
+        ttk.Entry(top, textvariable=self.input_var).grid(row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(top, text="File...", command=self._pick_file).grid(row=0, column=2)
+        ttk.Button(top, text="Folder...", command=self._pick_folder).grid(row=0, column=3, padx=(4, 0))
+
+        ttk.Label(top, text="Output:").grid(row=1, column=0, sticky="w")
+        self.output_var = tk.StringVar()
+        ttk.Entry(top, textvariable=self.output_var).grid(row=1, column=1, sticky="ew", padx=4)
+        ttk.Button(top, text="Browse...", command=self._pick_output).grid(row=1, column=2, columnspan=2, sticky="ew")
+
+        modes = ttk.Frame(self)
+        modes.pack(fill="x", **pad)
+        ttk.Label(modes, text="Mode:").pack(side="left")
+        self.mode_var = tk.StringVar(value="full-forensic")
+        ttk.Radiobutton(modes, text="Full Forensic (write PNG frames)", variable=self.mode_var,
+                        value="full-forensic").pack(side="left", padx=8)
+        ttk.Radiobutton(modes, text="Decode-Only (hashes, no images)", variable=self.mode_var,
+                        value="decode-only").pack(side="left", padx=8)
+        ttk.Label(modes, text=f"Workers: {vpc.MAX_WORKERS}").pack(side="right")
+
+        buttons = ttk.Frame(self)
+        buttons.pack(fill="x", **pad)
+        self.btn_estimate = ttk.Button(buttons, text="Estimate", command=self._start_estimate)
+        self.btn_estimate.pack(side="left")
+        self.btn_start = ttk.Button(buttons, text="Start", command=self._start_run)
+        self.btn_start.pack(side="left", padx=6)
+        self.btn_stop = ttk.Button(buttons, text="Stop", command=self._stop_run, state="disabled")
+        self.btn_stop.pack(side="left")
+        self.btn_open = ttk.Button(buttons, text="Open Output Folder", command=self._open_output, state="disabled")
+        self.btn_open.pack(side="right")
+
+        est_frame = ttk.LabelFrame(self, text="Estimate")
+        est_frame.pack(fill="x", **pad)
+        self.estimate_text = ScrolledText(est_frame, height=6, wrap="word", state="disabled")
+        self.estimate_text.pack(fill="x", padx=4, pady=4)
+
+        prog = ttk.LabelFrame(self, text="Progress")
+        prog.pack(fill="both", expand=False, **pad)
+        self.status_var = tk.StringVar(value="Idle")
+        ttk.Label(prog, textvariable=self.status_var).pack(anchor="w", padx=4)
+        self.progress = ttk.Progressbar(prog, mode="determinate", maximum=1000)
+        self.progress.pack(fill="x", padx=4, pady=2)
+        cols = ("video", "status", "frames", "estimated", "rejected")
+        self.tree = ttk.Treeview(prog, columns=cols, show="headings", height=6)
+        for c, w in zip(cols, (330, 170, 80, 90, 120)):
+            self.tree.heading(c, text={"video": "Video", "status": "Status", "frames": "Frames",
+                                       "estimated": "Estimated", "rejected": "Rejected packets"}[c])
+            self.tree.column(c, width=w, anchor="w" if c == "video" else "e")
+        self.tree.pack(fill="both", expand=True, padx=4, pady=4)
+
+        logf = ttk.LabelFrame(self, text="Log")
+        logf.pack(fill="both", expand=True, **pad)
+        self.log = ScrolledText(logf, height=12, wrap="none", state="disabled",
+                                font=("Menlo" if platform.system() == "Darwin" else "Consolas", 10))
+        self.log.pack(fill="both", expand=True, padx=4, pady=4)
+
+
+if ctk is not None:
+    # Each colour is (light, dark), as in AppWalk's window; CustomTkinter picks by the appearance mode.
+    BG, CARD, SOFT = ("#F3F4F6", "#111318"), ("#FFFFFF", "#1A1D23"), ("#EEF0F3", "#22262E")
+    INK, MUTED, LINE = ("#111827", "#E6E8EC"), ("#6B7280", "#9AA3AF"), ("#E3E6EA", "#2C313A")
+    ACCENT, ACCENT_HOVER = ("#2563EB", "#3B82F6"), ("#1D4ED8", "#2563EB")
+    SELECT = ("#DCE7FD", "#24427A")
+
+    class Primary(ctk.CTkButton):
+        """The blue button. Greyed when it is off, so a pressed Start does not look ready to press again."""
+
+        def configure(self, require_redraw=False, **kw):
+            if "state" in kw:
+                kw["fg_color"] = SOFT if kw["state"] == "disabled" else ACCENT
+            return super().configure(require_redraw=require_redraw, **kw)
+
+    class Progress(ctk.CTkProgressBar):
+        """A progress bar that takes the plain Tk calls the run code makes: configure(mode=, value=0..1000)
+        and progress["value"]."""
+
+        def configure(self, require_redraw=False, **kw):
+            value = kw.pop("value", None)
+            kw.pop("maximum", None)
+            out = super().configure(require_redraw=require_redraw, **kw) if kw else None
+            if value is not None:
+                self.set(max(0.0, min(1.0, value / 1000)))
+            return out
+
+        def __getitem__(self, key):
+            return self.get() * 1000 if key == "value" else self.cget(key)
+
+    class ModernApp(Runner, ctk.CTk):
+        """The window drawn with CustomTkinter."""
+
+        def __init__(self):
+            ctk.set_appearance_mode("system")
+            ctk.set_default_color_theme("blue")
+            ctk.CTk.__init__(self, fg_color=BG)
+            self.minsize(960, 760)
+            self.geometry(f"1040x{min(900, self.winfo_screenheight() - 120)}")
+            self._start()
+
+        def _build(self):
+            f_body, f_small = ctk.CTkFont(size=14), ctk.CTkFont(size=12)
+            f_bold, f_title, f_big = ctk.CTkFont(size=14, weight="bold"), ctk.CTkFont(size=20, weight="bold"), \
+                ctk.CTkFont(size=16, weight="bold")
+            self.f_body = f_body
+
+            def ghost(parent, text, command, **kw):
+                return ctk.CTkButton(parent, text=text, command=command, font=f_body, height=34, corner_radius=10,
+                                     fg_color=CARD, hover_color=SOFT, text_color=INK, border_width=1, border_color=LINE,
+                                     text_color_disabled=MUTED, **kw)
+
+            def card(parent, title, **pack):
+                outer = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=14, border_width=1, border_color=LINE)
+                outer.pack(fill="x", pady=(0, 12), **pack)
+                ctk.CTkLabel(outer, text=title, font=f_big, text_color=INK, anchor="w").pack(fill="x", padx=18, pady=(12, 0))
+                inner = ctk.CTkFrame(outer, fg_color="transparent")
+                inner.pack(fill="both", expand=True, padx=18, pady=(6, 14))
+                return inner
+
+            head = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0)
+            head.pack(fill="x")
+            try:
+                from PIL import Image, ImageTk  # noqa: F401  CTkImage needs ImageTk, which Ubuntu packs apart
+                im = Image.open(os.path.join(ASSETS, f"{LOGO}_256.png"))
+                self.logo = ctk.CTkImage(light_image=im, dark_image=im, size=(36, 36))
+            except ImportError:
+                try:
+                    self.logo = tk.PhotoImage(master=self, file=os.path.join(ASSETS, f"{LOGO}_36.png"))
+                except tk.TclError:
+                    self.logo = None
+            except OSError:
+                self.logo = None
+            if self.logo is not None:
+                import warnings
+                logo = ctk.CTkLabel(head, text="")
+                with warnings.catch_warnings():   # a plain PhotoImage works; CustomTkinter warns it will not scale
+                    warnings.simplefilter("ignore")
+                    logo.configure(image=self.logo)
+                logo.pack(side="left", padx=(22, 0), pady=12)
+            ctk.CTkLabel(head, text="Forensic Video Processor", font=f_title, text_color=INK).pack(
+                side="left", padx=(10 if self.logo else 24, 12), pady=16)
+            ctk.CTkLabel(head, text=f"{vpc.TOOL_VERSION}   frames counted by decoding them", font=f_small,
+                         text_color=MUTED).pack(side="left", pady=(4, 0))
+            self.theme_btn = ctk.CTkSegmentedButton(head, values=["Light", "Dark"], command=self._pick_theme,
+                                                    font=f_small, selected_color=ACCENT, selected_hover_color=ACCENT_HOVER)
+            self.theme_btn.set("Dark" if ctk.get_appearance_mode() == "Dark" else "Light")
+            self.theme_btn.pack(side="right", padx=20)
+            ctk.CTkFrame(self, height=1, fg_color=LINE, corner_radius=0).pack(fill="x")
+
+            body = ctk.CTkFrame(self, fg_color="transparent")
+            body.pack(fill="both", expand=True, padx=22, pady=16)
+
+            c = card(body, "Videos")
+            c.columnconfigure(1, weight=1)
+            self.input_var = tk.StringVar()
+            self.output_var = tk.StringVar()
+            for row, (label, var) in enumerate((("Input", self.input_var), ("Output", self.output_var))):
+                ctk.CTkLabel(c, text=label, font=f_body, text_color=INK).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=4)
+                ctk.CTkEntry(c, textvariable=var, height=34, corner_radius=8, font=f_body, border_color=LINE,
+                             fg_color=SOFT, text_color=INK).grid(row=row, column=1, sticky="ew", pady=4)
+            ghost(c, "File...", self._pick_file, width=96).grid(row=0, column=2, padx=(10, 0))
+            ghost(c, "Folder...", self._pick_folder, width=96).grid(row=0, column=3, padx=(8, 0))
+            ghost(c, "Browse...", self._pick_output).grid(row=1, column=2, columnspan=2, sticky="ew", padx=(10, 0))
+            self.mode_var = tk.StringVar(value="full-forensic")
+            modes = ctk.CTkFrame(c, fg_color="transparent")
+            modes.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+            for value, text in (("full-forensic", "Full Forensic (write PNG frames)"),
+                                ("decode-only", "Decode-Only (hashes, no images)")):
+                ctk.CTkRadioButton(modes, text=text, variable=self.mode_var, value=value, font=f_body, text_color=INK,
+                                   fg_color=ACCENT, hover_color=ACCENT_HOVER, border_color=MUTED).pack(side="left", padx=(0, 22))
+            ctk.CTkLabel(modes, text=f"Workers: {vpc.MAX_WORKERS}", font=f_small, text_color=MUTED).pack(side="right")
+
+            buttons = ctk.CTkFrame(body, fg_color="transparent")
+            buttons.pack(fill="x", pady=(0, 12))
+            self.btn_start = Primary(buttons, text="Start", command=self._start_run, font=f_bold, height=36, width=120,
+                                     corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                                     text_color_disabled=MUTED)
+            self.btn_start.pack(side="left")
+            self.btn_estimate = ghost(buttons, "Estimate", self._start_estimate, width=110)
+            self.btn_estimate.pack(side="left", padx=8)
+            self.btn_stop = ghost(buttons, "Stop", self._stop_run, width=90, state="disabled")
+            self.btn_stop.pack(side="left")
+            self.btn_open = ghost(buttons, "Open Output Folder", self._open_output, state="disabled")
+            self.btn_open.pack(side="right")
+
+            c = card(body, "Estimate")
+            self.estimate_text = ctk.CTkTextbox(c, height=96, font=f_small, fg_color=SOFT, text_color=INK,
+                                                corner_radius=10, wrap="word", border_width=0)
+            self.estimate_text.configure(state="disabled")
+            self.estimate_text.pack(fill="x")
+
+            c = card(body, "Progress")
+            self.status_var = tk.StringVar(value="Idle")
+            ctk.CTkLabel(c, textvariable=self.status_var, font=f_body, text_color=MUTED, anchor="w",
+                         justify="left", wraplength=900).pack(fill="x")
+            self.progress = Progress(c, height=8, corner_radius=4, progress_color=ACCENT, fg_color=SOFT)
+            self.progress.set(0)
+            self.progress.pack(fill="x", pady=(6, 10))
+            cols = ("video", "status", "frames", "estimated", "rejected")
+            self.tree = ttk.Treeview(c, columns=cols, show="headings", height=5, style="Galore.Treeview")
+            for col, w in zip(cols, (330, 170, 80, 90, 120)):
+                self.tree.heading(col, text={"video": "Video", "status": "Status", "frames": "Frames",
+                                             "estimated": "Estimated", "rejected": "Rejected packets"}[col])
+                self.tree.column(col, width=w, anchor="w" if col == "video" else "e")
+            self.tree.pack(fill="x")
+            self._tree_colours()
+
+            c = card(body, "Log", expand=True)
+            c.master.pack_configure(fill="both", expand=True, pady=0)
+            self.log = ctk.CTkTextbox(c, font=ctk.CTkFont(family="Menlo" if platform.system() == "Darwin" else "Consolas",
+                                                          size=12),
+                                      fg_color=SOFT, text_color=INK, corner_radius=10, wrap="none", border_width=0)
+            self.log.configure(state="disabled")
+            self.log.pack(fill="both", expand=True)
+
+        def _pick_theme(self, value):
+            ctk.set_appearance_mode("dark" if value == "Dark" else "light")
+            self._tree_colours()
+
+        def _tree_colours(self):
+            """ttk's table does not follow CustomTkinter's mode: colour it from the same pairs."""
+            i = 1 if ctk.get_appearance_mode() == "Dark" else 0
+            style = ttk.Style(self)
+            style.theme_use("clam")
+            rows = max(22, self.f_body.metrics("linespace") + 8)
+            style.configure("Galore.Treeview", background=CARD[i], fieldbackground=CARD[i], foreground=INK[i],
+                            bordercolor=LINE[i], lightcolor=CARD[i], darkcolor=CARD[i], rowheight=rows,
+                            font=("TkDefaultFont", 12))
+            style.map("Galore.Treeview", background=[("selected", SELECT[i])],
+                      foreground=[("selected", "#FFFFFF" if i else INK[0])])
+            style.configure("Galore.Treeview.Heading", background=SOFT[i], foreground=MUTED[i], bordercolor=LINE[i],
+                            lightcolor=SOFT[i], darkcolor=SOFT[i], relief="flat")
+            style.map("Galore.Treeview.Heading", background=[("active", LINE[i])])
+
+
 def main():
-    app = App()
+    if ctk is None:
+        print("CustomTkinter is not installed; opening the plain window. pip install customtkinter for the newer one.")
+        app = App()
+        kind = "plain Tk"
+    else:
+        app = ModernApp()
+        kind = "CustomTkinter"
+    smoke_check(app, kind)
     app.mainloop()
 
 

@@ -10,6 +10,8 @@ Contents
                              video_processor_cli -i video.mp4 -o output --estimate
                              video_processor_cli -i video.mp4 --estimate-only
   SHA256SUMS.txt             Checksums of the files above.
+  THIRD_PARTY_NOTICES.md     The packages the window is drawn with.
+  licenses/                  Their licence texts.
 
 Each executable is a single file with Python, PyAV and the FFmpeg libraries bundled.
 No installation is needed and no system FFmpeg is used. The first start can take 10 to

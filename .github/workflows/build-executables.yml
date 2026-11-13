@@ -63,11 +63,20 @@ jobs:
           video_processor_cli.py
 
       - name: Build graphical executable
-        run: >
-          pyinstaller --noconfirm --clean --onefile --windowed
-          --name video_processor_gui --collect-all av
-          --hidden-import video_processor_cli
-          video_processor_gui.py
+        shell: bash
+        run: |
+          # CustomTkinter's themes and fonts are data files; the logo and icons travel inside the
+          # build; PIL._tkinter_finder is loaded by Pillow's Tk part at run time and not seen
+          case "$RUNNER_OS" in
+            Windows) icon=assets/frame-counts-galore.ico ;;
+            macOS) icon=assets/frame-counts-galore.icns ;;
+            *) icon=NONE ;;
+          esac
+          pyinstaller --noconfirm --clean --onefile --windowed \
+            --name video_processor_gui --collect-all av \
+            --hidden-import video_processor_cli --hidden-import PIL._tkinter_finder \
+            --collect-data customtkinter --add-data "assets:assets" --icon "$icon" \
+            video_processor_gui.py
 
       - name: Run the command line executable on the damaged test videos
         shell: python
@@ -95,6 +104,19 @@ jobs:
           assert pngs == sum(f for f, _ in expected.values()), pngs
           print("test videos decoded with the expected counts on", manifest["platform"])
 
+      - name: Check the graphical executable opens its CustomTkinter window with the logo
+        shell: python
+        run: |
+          import json, os, subprocess, sys
+          exe = os.path.join("dist", "video_processor_gui" + (".exe" if os.name == "nt" else ""))
+          cmd = [exe] if not sys.platform.startswith("linux") else ["xvfb-run", "-a", exe]
+          out = os.path.abspath("smoke_gui.json")
+          subprocess.run(cmd, env=dict(os.environ, FRAMES_GALORE_SMOKE=out), timeout=180, stdin=subprocess.DEVNULL)
+          facts = json.load(open(out))
+          print(facts)
+          assert facts["window"] == "CustomTkinter" and facts["frozen"] and facts["assets"], facts
+          assert facts["logo"] and facts["icon"], "the window has no logo or no icon"
+
       - name: Check the graphical executable starts and stays up
         shell: python
         run: |
@@ -120,6 +142,8 @@ jobs:
           name="frame-counts-galore-${GITHUB_REF_NAME//\//-}-${{ matrix.label }}"
           mkdir -p "pkg/$name"
           cp packaging/README.txt "pkg/$name/README.txt"
+          cp THIRD_PARTY_NOTICES.md "pkg/$name/"
+          cp -R licenses "pkg/$name/"
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp dist/video_processor_cli.exe dist/video_processor_gui.exe "pkg/$name/"
             (cd "pkg/$name" && sha256sum video_processor_*.exe > SHA256SUMS.txt)

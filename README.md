@@ -154,7 +154,7 @@ Points to keep in mind:
 python video_processor_gui.py
 ```
 
-The window offers the same two modes and calls the same processing code as the command line tool, so the case folder, CSV files, PNG images, log and manifest are identical. It adds:
+The window offers the same two modes and calls the same processing code as the command line tool, so the case folder, CSV files, PNG images, log and manifest are identical. With CustomTkinter installed (it is in `requirements.txt`) it has a header with the logo and a Light/Dark switch, and starts in the system's mode; without it a plain Tk window opens with the same controls. See `THIRD_PARTY_NOTICES.md`. It adds:
 
 - File and folder pickers for the input and the output directory.
 - An **Estimate** button that shows the per-video and total estimate described above. In full forensic mode, once an estimate has been made in that mode, the Start button asks for confirmation when the estimate comes to 5 GB of PNGs or more. Starting a run without pressing Estimate first does not prompt.
