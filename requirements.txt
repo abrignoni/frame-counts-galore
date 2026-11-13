@@ -2,6 +2,7 @@
 av           # PyAV for video decoding (requires FFmpeg installed)
 numpy        # For array manipulation and image verification
 Pillow       # For saving frames as PNG images
+customtkinter  # The window's look (MIT); without it the plain Tk window opens
 
 # Standard library modules used in the script (no installation needed)
 # argparse
